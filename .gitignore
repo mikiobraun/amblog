@@ -1,3 +1,7 @@
 /am
 /amfeed
 /data/
+/dev.yaml
+/amfront/node_modules/
+/amfront/dist/
+/amfront/.env*.local

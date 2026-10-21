@@ -635,7 +635,9 @@ amfront is a static web application (HTML + JS). It talks to exactly two kinds o
 - **Aggregator(s)** — all reading: timelines, threads, profiles. Feeds from third-party servers are fetched through the aggregator's proxy (`GET /api/feed`), so amfront never needs CORS from arbitrary feed servers.
 - **Feed server** — posting only. Posting never goes through the aggregator; otherwise the aggregator would hold the posting token and could post as the user.
 
-The reference implementation is a small Go binary that serves the embedded static files. Any static host works too.
+The reference implementation is a Vue 3 + Vite + TypeScript app in `amfront/`. `npm run build` produces static files that any static host can serve; a small Go binary embedding them may follow. It verifies entry signatures in the browser (Web Crypto Ed25519), with the same signing input as the Go code.
+
+For reading, a feed server is an aggregator with one member who follows nobody: both serve paged Atom feeds of signed entries. So amfront treats a timeline as just an Atom feed URL — your own `feed.atom` today, an aggregator timeline later.
 
 ```go
 type Connections struct {
