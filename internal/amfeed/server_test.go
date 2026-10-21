@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"atomicmicro.blog/internal/atom"
 	"atomicmicro.blog/internal/sign"
@@ -14,8 +15,15 @@ import (
 
 type testEnv struct {
 	t     *testing.T
+	srv   *Server
 	url   string
 	admin string
+	clock time.Time
+}
+
+// tick advances the server clock by one second.
+func (env *testEnv) tick() {
+	env.clock = env.clock.Add(time.Second)
 }
 
 func newTestEnv(t *testing.T) *testEnv {
@@ -47,10 +55,13 @@ func newTestEnv(t *testing.T) *testEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
+	env := &testEnv{t: t, srv: srv, url: baseURL, admin: admin,
+		clock: time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)}
+	srv.now = func() time.Time { return env.clock }
 	ts.Config.Handler = srv
 	ts.Start()
 	t.Cleanup(ts.Close)
-	return &testEnv{t: t, url: baseURL, admin: admin}
+	return env
 }
 
 func (env *testEnv) do(method, path, token, body string, header ...string) (*http.Response, string) {
@@ -153,15 +164,95 @@ func TestPostFeedDelete(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Delete leaves a signed tombstone.
+	// Delete leaves a signed tombstone, which moves to the top of the feed.
+	env.tick()
 	resp, body = env.do("DELETE", "/api/entries/1", env.admin, "")
 	env.expect(resp, body, 204)
 	f = env.feed()
-	if len(f.Entries) != 2 || f.Entries[1].ID != first.ID || f.Entries[1].Content.Body != "" {
-		t.Fatalf("tombstone not as expected: %+v", f.Entries[1])
+	if len(f.Entries) != 2 || f.Entries[0].ID != first.ID || f.Entries[0].Content.Body != "" {
+		t.Fatalf("tombstone not as expected: %+v", f.Entries[0])
 	}
 	resp, body = env.do("GET", "/posts/1", "", "")
 	env.expect(resp, body, 410)
+}
+
+// feedIDs walks the feed's next links from the first page and returns all
+// entry ids in order.
+func (env *testEnv) feedIDs() []string {
+	env.t.Helper()
+	var ids []string
+	path := "/feed.atom"
+	for pages := 0; path != ""; pages++ {
+		if pages > 100 {
+			env.t.Fatal("too many pages, next links loop?")
+		}
+		resp, body := env.do("GET", path, "", "")
+		env.expect(resp, body, 200)
+		f, err := atom.Parse([]byte(body))
+		if err != nil {
+			env.t.Fatal(err)
+		}
+		for _, e := range f.Entries {
+			ids = append(ids, e.ID[strings.LastIndex(e.ID, "-")+1:])
+		}
+		path = ""
+		for _, l := range f.Links {
+			if l.Rel == "next" {
+				path = strings.TrimPrefix(l.Href, env.url)
+			}
+		}
+	}
+	return ids
+}
+
+func TestFeedPaging(t *testing.T) {
+	env := newTestEnv(t)
+	env.srv.feedPageSize = 2
+
+	// Posts 1-3 share a timestamp, so their order relies on the seq tiebreak.
+	for i := range 5 {
+		if i >= 3 {
+			env.tick()
+		}
+		resp, body := env.do("POST", "/api/entries", env.admin, `{"content":"post"}`)
+		env.expect(resp, body, 201)
+	}
+	if got, want := strings.Join(env.feedIDs(), " "), "5 4 3 2 1"; got != want {
+		t.Errorf("feed order = %s, want %s", got, want)
+	}
+
+	env.tick()
+	resp, body := env.do("DELETE", "/api/entries/2", env.admin, "")
+	env.expect(resp, body, 204)
+	if got, want := strings.Join(env.feedIDs(), " "), "2 5 4 3 1"; got != want {
+		t.Errorf("feed order after delete = %s, want %s", got, want)
+	}
+
+	resp, body = env.do("GET", "/feed.atom?before=yesterday,3", "", "")
+	env.expect(resp, body, 400)
+
+	// The API pages the same way.
+	resp, body = env.do("GET", "/api/entries?limit=3", env.admin, "")
+	env.expect(resp, body, 200)
+	var page struct {
+		Entries []struct{ Seq int64 }
+		Next    string
+	}
+	if err := json.Unmarshal([]byte(body), &page); err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Entries) != 3 || page.Entries[0].Seq != 2 || page.Next == "" {
+		t.Fatalf("api page 1: %s", body)
+	}
+	resp, body = env.do("GET", "/api/entries?limit=3&before="+page.Next, env.admin, "")
+	env.expect(resp, body, 200)
+	page.Next = ""
+	if err := json.Unmarshal([]byte(body), &page); err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Entries) != 2 || page.Entries[1].Seq != 1 || page.Next != "" {
+		t.Fatalf("api page 2: %s", body)
+	}
 }
 
 func TestTokens(t *testing.T) {

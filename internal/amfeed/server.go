@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	feedSize        = 50
+	feedPageSize    = 50
 	defaultPageSize = 20
 	maxPageSize     = 100
 	// Atom requires feed/updated; an empty feed has never been updated.
@@ -29,11 +29,13 @@ const (
 )
 
 type Server struct {
-	cfg   *Config
-	store *Store
-	key   ed25519.PrivateKey
-	host  string // base URL hostname, used in tag: ids
-	mux   *http.ServeMux
+	cfg          *Config
+	store        *Store
+	key          ed25519.PrivateKey
+	host         string // base URL hostname, used in tag: ids
+	feedPageSize int
+	now          func() time.Time
+	mux          *http.ServeMux
 }
 
 func NewServer(cfg *Config, store *Store, key ed25519.PrivateKey) (*Server, error) {
@@ -41,7 +43,7 @@ func NewServer(cfg *Config, store *Store, key ed25519.PrivateKey) (*Server, erro
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{cfg: cfg, store: store, key: key, host: u.Hostname(), mux: http.NewServeMux()}
+	s := &Server{cfg: cfg, store: store, key: key, host: u.Hostname(), feedPageSize: feedPageSize, now: time.Now, mux: http.NewServeMux()}
 
 	s.mux.HandleFunc("GET /{$}", s.handleProfile)
 	s.mux.HandleFunc("GET /feed.atom", s.handleFeed)
@@ -72,6 +74,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // --- Atom ---
 
 func (s *Server) feedURL() string { return s.cfg.Feed.BaseURL + "/feed.atom" }
+
+func (s *Server) feedPageURL(before *Cursor) string {
+	if before == nil {
+		return s.feedURL()
+	}
+	return s.feedURL() + "?before=" + url.QueryEscape(before.String())
+}
 
 func (s *Server) postURL(seq int64) string {
 	return s.cfg.Feed.BaseURL + "/posts/" + strconv.FormatInt(seq, 10)
@@ -112,8 +121,14 @@ func (s *Server) sign(e *Entry) error {
 	return nil
 }
 
+// handleFeed serves the feed in pages (RFC 5005 paged feed), most recently
+// updated first, so edits and deletes reach subscribers on their next poll.
 func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
-	entries, err := s.store.ListEntries(0, feedSize)
+	before, ok := cursorParam(w, r)
+	if !ok {
+		return
+	}
+	entries, next, err := s.store.ListEntries(before, s.feedPageSize)
 	if err != nil {
 		s.serverError(w, err)
 		return
@@ -132,9 +147,13 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 		Updated: updated,
 		Author:  s.author(),
 		Links: []atom.Link{
-			{Rel: "self", Href: s.feedURL(), Type: atom.MediaType},
+			{Rel: "self", Href: s.feedPageURL(before), Type: atom.MediaType},
+			{Rel: "first", Href: s.feedURL(), Type: atom.MediaType},
 			{Rel: "alternate", Href: s.cfg.Feed.BaseURL + "/", Type: "text/html"},
 		},
+	}
+	if next != nil {
+		f.Links = append(f.Links, atom.Link{Rel: "next", Href: s.feedPageURL(next), Type: atom.MediaType})
 	}
 	for _, e := range entries {
 		f.Entries = append(f.Entries, s.atomEntry(e))
@@ -178,12 +197,18 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleProfile(w http.ResponseWriter, r *http.Request) {
-	entries, err := s.store.ListEntries(0, defaultPageSize)
+	entries, _, err := s.store.ListEntries(nil, defaultPageSize)
 	if err != nil {
 		s.serverError(w, err)
 		return
 	}
-	s.renderHTML(w, http.StatusOK, profileTemplate, s.pageData(entries))
+	var visible []*Entry
+	for _, e := range entries {
+		if !e.Deleted {
+			visible = append(visible, e)
+		}
+	}
+	s.renderHTML(w, http.StatusOK, profileTemplate, s.pageData(visible))
 }
 
 func (s *Server) handleKeys(w http.ResponseWriter, r *http.Request) {
@@ -253,7 +278,7 @@ func (s *Server) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	now := time.Now().UTC()
+	now := s.now().UTC()
 	nowStr := now.Format(time.RFC3339)
 	e, err := s.store.CreateEntry(func(seq int64) (*Entry, error) {
 		e := &Entry{
@@ -280,27 +305,33 @@ func (s *Server) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListEntries(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	before, err := intParam(q.Get("before"), 0)
-	if err != nil || before < 0 {
-		writeError(w, http.StatusBadRequest, "before must be a post number")
+	before, ok := cursorParam(w, r)
+	if !ok {
 		return
 	}
-	limit, err := intParam(q.Get("limit"), defaultPageSize)
-	if err != nil || limit < 1 || limit > maxPageSize {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("limit must be between 1 and %d", maxPageSize))
-		return
+	limit := int64(defaultPageSize)
+	if v := r.URL.Query().Get("limit"); v != "" {
+		var err error
+		limit, err = strconv.ParseInt(v, 10, 64)
+		if err != nil || limit < 1 || limit > maxPageSize {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("limit must be between 1 and %d", maxPageSize))
+			return
+		}
 	}
-	entries, err := s.store.ListEntries(before, int(limit))
+	entries, next, err := s.store.ListEntries(before, int(limit))
 	if err != nil {
 		s.serverError(w, err)
 		return
 	}
 	resp := struct {
 		Entries []entryResponse `json:"entries"`
+		Next    string          `json:"next,omitempty"` // cursor for ?before=
 	}{Entries: []entryResponse{}}
 	for _, e := range entries {
 		resp.Entries = append(resp.Entries, s.entryResponse(e))
+	}
+	if next != nil {
+		resp.Next = next.String()
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -316,7 +347,7 @@ func (s *Server) handleDeleteEntry(w http.ResponseWriter, r *http.Request) {
 		e.Title = ""
 		e.ContentType = "text"
 		e.Content = ""
-		e.Updated = time.Now().UTC().Format(time.RFC3339)
+		e.Updated = s.now().UTC().Format(time.RFC3339)
 		e.Deleted = true
 		if err := s.sign(e); err != nil {
 			s.serverError(w, err)
@@ -398,11 +429,19 @@ func (s *Server) entryFromPath(w http.ResponseWriter, r *http.Request) (*Entry, 
 	return e, true
 }
 
-func intParam(s string, def int64) (int64, error) {
-	if s == "" {
-		return def, nil
+// cursorParam parses the optional ?before= cursor. It writes a 400 and
+// returns ok = false if the cursor is malformed.
+func cursorParam(w http.ResponseWriter, r *http.Request) (before *Cursor, ok bool) {
+	v := r.URL.Query().Get("before")
+	if v == "" {
+		return nil, true
 	}
-	return strconv.ParseInt(s, 10, 64)
+	c, err := ParseCursor(v)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return nil, false
+	}
+	return &c, true
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {

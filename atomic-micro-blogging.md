@@ -239,7 +239,11 @@ Anything not in this list (links, aggregator metadata, WebMention endpoints) is 
 
 #### `GET /feed.atom`
 
-Returns the Atom feed. Standard HTTP caching (`ETag`, `Last-Modified`, `304 Not Modified`).
+Returns the Atom feed. Standard HTTP caching (`ETag`, `304 Not Modified`).
+
+Entries are ordered by `updated`, most recent first (ties broken by post number). Edits and deletes bump `updated`, so they move to the top and reach subscribers on their next poll, without crawling history.
+
+The feed is paged per [RFC 5005](https://tools.ietf.org/html/rfc5005) (paged feed): each page links `rel="first"` and, if there are older entries, `rel="next"`. The page cursor is `?before=<updated>,<n>` — the `updated` timestamp and post number of the last entry on the previous page, e.g. `/feed.atom?before=2026-10-21T21:07:11Z,3`. Pages are for backfilling history; subscribers polling for changes only need the first page.
 
 #### `GET /posts/{id}`
 
@@ -292,7 +296,7 @@ Soft-delete post number `n` (as in `/posts/{n}`): content and title are cleared,
 
 #### `GET /api/entries`
 
-List entries, paginated. Token-authenticated. For management UIs.
+List entries in feed order, paged with the same `?before=` cursor as the feed; the response carries the next cursor as `next`. `?limit=` sets the page size (max 100). Token-authenticated. For management UIs.
 
 ### Authentication
 
@@ -881,7 +885,7 @@ Others:     bring their own feeds and frontends
 
 3. **Rich media** — Media hosting is the feed server's problem. Should amfeed include media upload, or delegate to external hosts?
 
-4. **Feed pagination** — RFC 5005 (Feed Paging and Archiving) provides standard Atom pagination. Should we mandate it?
+4. ~~**Feed pagination**~~ — Resolved: RFC 5005 paged feeds, ordered by `updated` (see amfeed `GET /feed.atom`). Archived feeds were rejected because deletes would change pages meant to be stable.
 
 5. **Aggregator trust** — If you register on an evil aggregator, it has your follow graph and sees your reading patterns. Mitigation: follow graph portability + ability to leave. The aggregator can't forge your posts (signatures), and your content lives on your feed server.
 

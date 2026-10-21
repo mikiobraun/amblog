@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -17,7 +18,7 @@ const usageText = `usage: am <command> [flags] [args]
   config [-feed URL] [-token TOKEN]    show or set the feed server
   post [-title T] [-html] TEXT...      publish a post (TEXT "-" reads stdin)
   reply [-html] URL TEXT...            reply to the entry at URL
-  ls [-n N] [-before SEQ]              list your posts
+  ls [-n N] [-before CURSOR]           list your posts, most recently updated first
   rm SEQ                               delete a post (leaves a tombstone)
   token create [-expires TIME] NAME    create a posting token (admin)
   show URL                             fetch a feed or entry, verify signatures
@@ -87,6 +88,7 @@ type entry struct {
 	ID          string     `json:"id"`
 	URL         string     `json:"url"`
 	Published   string     `json:"published"`
+	Updated     string     `json:"updated"`
 	Title       string     `json:"title"`
 	ContentType string     `json:"content_type"`
 	Content     string     `json:"content"`
@@ -180,14 +182,21 @@ func runReply(args []string) error {
 func runLs(args []string) error {
 	fs := flag.NewFlagSet("ls", flag.ExitOnError)
 	n := fs.Int("n", 20, "number of posts")
-	before := fs.Int64("before", 0, "list posts before this post number")
+	before := fs.String("before", "", "page cursor, as printed by a previous ls")
 	fs.Parse(args)
 	c, err := newFeedClient()
 	if err != nil {
 		return err
 	}
-	var resp struct{ Entries []entry }
-	if err := c.do("GET", fmt.Sprintf("/api/entries?limit=%d&before=%d", *n, *before), nil, &resp); err != nil {
+	q := url.Values{"limit": {strconv.Itoa(*n)}}
+	if *before != "" {
+		q.Set("before", *before)
+	}
+	var resp struct {
+		Entries []entry
+		Next    string
+	}
+	if err := c.do("GET", "/api/entries?"+q.Encode(), nil, &resp); err != nil {
 		return err
 	}
 	for _, e := range resp.Entries {
@@ -202,7 +211,10 @@ func runLs(args []string) error {
 		if e.InReplyTo != nil {
 			reply = "↳ "
 		}
-		fmt.Printf("%4d  %s  %s%s\n", e.Seq, e.Published, reply, oneLine(text, 60))
+		fmt.Printf("%4d  %s  %s%s\n", e.Seq, e.Updated, reply, oneLine(text, 60))
+	}
+	if resp.Next != "" {
+		fmt.Printf("\nmore: am ls -before %s\n", resp.Next)
 	}
 	return nil
 }

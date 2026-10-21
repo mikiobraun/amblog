@@ -3,6 +3,9 @@ package amfeed
 import (
 	"database/sql"
 	"errors"
+	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -46,6 +49,7 @@ var schema = []string{
 		signature        TEXT NOT NULL,
 		deleted          INTEGER NOT NULL
 	)`,
+	`CREATE INDEX IF NOT EXISTS entries_feed_order ON entries (updated, seq)`,
 	`CREATE TABLE IF NOT EXISTS tokens (
 		hash    TEXT PRIMARY KEY,
 		name    TEXT NOT NULL,
@@ -136,23 +140,70 @@ func (s *Store) GetEntry(seq int64) (*Entry, error) {
 	return scanEntry(s.db.QueryRow(`SELECT `+entryColumns+` FROM entries WHERE seq = ?`, seq))
 }
 
-// ListEntries returns entries newest first. before = 0 starts at the newest.
-func (s *Store) ListEntries(before int64, limit int) ([]*Entry, error) {
-	rows, err := s.db.Query(`SELECT `+entryColumns+` FROM entries
-		WHERE ? = 0 OR seq < ? ORDER BY seq DESC LIMIT ?`, before, before, limit)
+// Cursor marks a position in feed order (updated desc, seq desc). Its text
+// form is "<updated>,<seq>", e.g. "2026-10-21T21:07:11Z,3".
+type Cursor struct {
+	Updated string
+	Seq     int64
+}
+
+func (c Cursor) String() string { return c.Updated + "," + strconv.FormatInt(c.Seq, 10) }
+
+func ParseCursor(s string) (Cursor, error) {
+	updated, seqStr, ok := strings.Cut(s, ",")
+	if !ok {
+		return Cursor{}, fmt.Errorf("cursor %q: want <updated>,<seq>", s)
+	}
+	// Timestamps are compared as strings, so only the canonical format we
+	// write is accepted.
+	t, err := time.Parse(time.RFC3339, updated)
+	if err != nil || t.UTC().Format(time.RFC3339) != updated {
+		return Cursor{}, fmt.Errorf("cursor %q: updated must be an RFC 3339 UTC timestamp like 2026-10-21T21:07:11Z", s)
+	}
+	seq, err := strconv.ParseInt(seqStr, 10, 64)
 	if err != nil {
-		return nil, err
+		return Cursor{}, fmt.Errorf("cursor %q: bad post number", s)
+	}
+	return Cursor{Updated: updated, Seq: seq}, nil
+}
+
+// ListEntries returns up to limit entries in feed order: most recently
+// updated first, ties broken by seq. before = nil starts at the top. next is
+// the cursor for the following page, or nil if this is the last one.
+//
+// Timestamps compare correctly as strings because they are all RFC 3339 UTC
+// with second precision.
+func (s *Store) ListEntries(before *Cursor, limit int) (entries []*Entry, next *Cursor, err error) {
+	query := `SELECT ` + entryColumns + ` FROM entries`
+	var args []any
+	if before != nil {
+		query += ` WHERE (updated, seq) < (?, ?)`
+		args = append(args, before.Updated, before.Seq)
+	}
+	query += ` ORDER BY updated DESC, seq DESC LIMIT ?`
+	args = append(args, limit+1) // one extra to know whether there is a next page
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, nil, err
 	}
 	defer rows.Close()
-	var entries []*Entry
 	for rows.Next() {
 		e, err := scanEntry(rows)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		entries = append(entries, e)
 	}
-	return entries, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	if len(entries) > limit {
+		entries = entries[:limit]
+		last := entries[limit-1]
+		next = &Cursor{Updated: last.Updated, Seq: last.Seq}
+	}
+	return entries, next, nil
 }
 
 // LatestUpdated returns the most recent updated time of any entry, or "" if
