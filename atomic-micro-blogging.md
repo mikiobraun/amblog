@@ -911,12 +911,14 @@ Others:     bring their own feeds and frontends
 
 ### Phase 1: Foundation
 
-- [ ] `amfeed`: Atom feed generation, entry CRUD, token auth, SQLite storage
-- [ ] `amfeed`: Entry signing (Ed25519, field-based)
+- [x] `amfeed`: Atom feed generation, entry CRUD, token auth, SQLite storage
+- [x] `amfeed`: Entry signing (Ed25519, field-based)
+- [x] `amfeed`: Paged feed (RFC 5005), ordered by `updated`
+- [x] `am`: CLI client — post, reply, list, delete, tokens, show with signature verification
 - [ ] `amagg`: Feed polling, user registration, follow graph, SQLite storage
 - [ ] `amagg`: Timeline generation (chronological), re-served entries (`alternate`, `via`, `atom:source`)
 - [ ] `amagg`: Feed proxy
-- [ ] `amfront`: Basic static web UI — read timeline, compose posts
+- [x] `amfront`: Basic static web UI — read timeline, compose posts, reply, delete, in-browser signature verification
 
 ### Phase 2: Interactions
 
@@ -940,4 +942,7 @@ Others:     bring their own feeds and frontends
 - [ ] `amagg`: Follow graph export/import
 - [ ] `amfront`: Multi-aggregator support
 - [ ] `amfront`: Media upload flow
+- [ ] `amfeed`: Store the author URI per entry, so changing `base_url`/`author_uri` doesn't silently break existing signatures
+- [ ] `amfeed`: Explicit tombstone marker (e.g. RFC 6721) instead of "empty content"
+- [x] Landing page at atomicmicro.blog, with go-import tag for the module path
 - [ ] Documentation site at atomicmicro.blog
