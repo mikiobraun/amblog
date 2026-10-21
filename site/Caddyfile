@@ -1,0 +1,28 @@
+# Caddyfile for atomicmicro.blog
+#
+# Serves the static landing page, and answers `go get` requests for the
+# vanity module path atomicmicro.blog/... with a go-import meta tag that
+# points the go tool at the actual repository.
+
+atomicmicro.blog {
+	# The go tool fetches https://atomicmicro.blog/<any/sub/path>?go-get=1
+	# and expects the go-import tag for the module root on every path.
+	@goget query go-get=1
+	handle @goget {
+		header Content-Type "text/html; charset=utf-8"
+		respond `<!doctype html>
+<html><head>
+<meta name="go-import" content="atomicmicro.blog git https://github.com/mikiobraun/amblog">
+</head><body>go get atomicmicro.blog</body></html>
+` 200
+	}
+
+	handle {
+		root * /var/www/atomicmicro.blog
+		file_server
+	}
+}
+
+www.atomicmicro.blog {
+	redir https://atomicmicro.blog{uri} permanent
+}

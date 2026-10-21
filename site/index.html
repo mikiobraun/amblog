@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Atomic Micro Blogging</title>
+<meta name="description" content="A decentralized social network built from existing web standards: publishing, aggregation and presentation, each independently swappable.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='-12 -12 24 24'><g fill='none' stroke='%23d0562b' stroke-width='1.4'><ellipse rx='10' ry='3.6'/><ellipse rx='10' ry='3.6' transform='rotate(60)'/><ellipse rx='10' ry='3.6' transform='rotate(-60)'/></g><circle r='2.2' fill='%23d0562b'/></svg>">
+<style>
+  :root {
+    --bg: #f6efe2;
+    --fg: #1f2a33;
+    --muted: #5d6870;
+    --accent: #d0562b;
+    --teal: #2b8a86;
+    --card: #fffaf0;
+    --border: #e2d6bf;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141a1f;
+      --fg: #ece4d4;
+      --muted: #9aa3a8;
+      --accent: #f07a4a;
+      --teal: #5cc2bc;
+      --card: #1b232a;
+      --border: #2c3740;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font: 17px/1.6 "Futura", "Century Gothic", "Avenir Next", system-ui, sans-serif;
+  }
+  main {
+    max-width: 44rem;
+    margin: 0 auto;
+    padding: 4rem 16px;
+  }
+  .atom {
+    width: 120px;
+    height: 120px;
+    display: block;
+    margin: 0 auto 2rem;
+  }
+  .atom .orbit { fill: none; stroke: var(--teal); stroke-width: 1.2; }
+  .atom .nucleus { fill: var(--accent); }
+  .atom .electron { fill: var(--accent); }
+  @media (prefers-reduced-motion: no-preference) {
+    .atom .spin { animation: spin 24s linear infinite; transform-origin: center; }
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  h1 {
+    text-align: center;
+    font-size: clamp(2rem, 6vw, 3rem);
+    line-height: 1.1;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    margin: 0;
+  }
+  .tagline {
+    text-align: center;
+    color: var(--muted);
+    font-size: 1.15rem;
+    margin: 0.75rem 0 3rem;
+  }
+  .parts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+    gap: 1rem;
+    margin: 0 0 3rem;
+  }
+  .part {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 1.1rem 1.2rem;
+  }
+  .part h2 {
+    margin: 0 0 0.25rem;
+    font-size: 1rem;
+    letter-spacing: 0.08em;
+    color: var(--accent);
+  }
+  .part p { margin: 0; color: var(--muted); font-size: 0.95rem; }
+  .status {
+    text-align: center;
+    color: var(--muted);
+    font-size: 0.95rem;
+  }
+  .status strong { color: var(--fg); }
+  code {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 0.9em;
+  }
+</style>
+</head>
+<body>
+<main>
+  <svg class="atom" viewBox="-60 -60 120 120" aria-hidden="true">
+    <g class="spin">
+      <ellipse class="orbit" rx="52" ry="18"/>
+      <ellipse class="orbit" rx="52" ry="18" transform="rotate(60)"/>
+      <ellipse class="orbit" rx="52" ry="18" transform="rotate(-60)"/>
+      <circle class="electron" cx="52" cy="0" r="4"/>
+      <circle class="electron" cx="52" cy="0" r="4" transform="rotate(120)"/>
+      <circle class="electron" cx="52" cy="0" r="4" transform="rotate(240)"/>
+    </g>
+    <circle class="nucleus" r="10"/>
+  </svg>
+
+  <h1>Atomic Micro Blogging</h1>
+  <p class="tagline">Social networking, split into its atoms.<br>Built entirely on Atom feeds and open web standards.</p>
+
+  <section class="parts">
+    <div class="part">
+      <h2>PUBLISH</h2>
+      <p>Your posts live on your feed server, at your URL. Signed, so nobody can forge them.</p>
+    </div>
+    <div class="part">
+      <h2>AGGREGATE</h2>
+      <p>Aggregators merge the feeds you follow into timelines. Pick one, switch any time.</p>
+    </div>
+    <div class="part">
+      <h2>PRESENT</h2>
+      <p>Any frontend can read any aggregator. Web, app, CLI — your choice.</p>
+    </div>
+  </section>
+
+  <p class="status"><strong>Early development.</strong> Go module: <code>atomicmicro.blog</code></p>
+</main>
+</body>
+</html>
