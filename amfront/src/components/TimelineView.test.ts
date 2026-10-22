@@ -46,3 +46,53 @@ it('renders the feed with verified signatures and own-post actions', async () =>
 
   app.unmount()
 })
+
+it('opens the reply box under the post and keeps the top box', async () => {
+  settings.feedServer = 'http://localhost:8198'
+  settings.token = 'test'
+  settings.timeline = ''
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === 'http://localhost:8198/feed.atom') return new Response(feedXML)
+      if (url === 'http://localhost:8198/atomic-keys') return Response.json(keysJSON)
+      if (url === 'http://localhost:8198/api/entries' && init?.method === 'POST')
+        return Response.json({ id: 'x' }, { status: 201 })
+      return new Response('not found', { status: 404 })
+    }),
+  )
+  const el = document.createElement('div')
+  const app = createApp(TimelineView)
+  app.mount(el)
+  await settle()
+  const forms = () => [...el.querySelectorAll('form.compose')].map((f) => f.className)
+  const button = (root: ParentNode, text: string) =>
+    [...root.querySelectorAll('button')].filter((b) => b.textContent?.trim() === text)
+  const top = ['compose']
+  const withReply = ['compose', 'compose reply']
+  expect(forms()).toEqual(top)
+
+  // The reply box opens under the post, after its card.
+  button(el, 'Reply')[0].click()
+  await settle()
+  expect(forms()).toEqual(withReply)
+  expect(el.querySelector('article.entry + form.compose.reply')).not.toBeNull()
+
+  const reply = el.querySelector('form.compose.reply') as HTMLFormElement
+  const ta = reply.querySelector('textarea')!
+  ta.value = 'hi'
+  ta.dispatchEvent(new Event('input'))
+  await settle()
+  reply.dispatchEvent(new Event('submit'))
+  await settle()
+  expect(forms()).toEqual(top)
+
+  button(el, 'Reply')[1].click()
+  await settle()
+  expect(forms()).toEqual(withReply)
+  button(el.querySelector('form.compose.reply')!, 'Cancel')[0].click()
+  await settle()
+  expect(forms()).toEqual(top)
+
+  app.unmount()
+})

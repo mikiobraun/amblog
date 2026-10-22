@@ -89,6 +89,7 @@ button.link.danger:hover {
 }
 
 button.primary,
+button.secondary,
 button.more {
   background: var(--accent);
   color: var(--accent-fg);
@@ -98,6 +99,12 @@ button.more {
   font: inherit;
   font-weight: 600;
   cursor: pointer;
+}
+
+button.secondary {
+  background: none;
+  color: var(--muted);
+  border: 1px solid var(--border);
 }
 
 button.more {

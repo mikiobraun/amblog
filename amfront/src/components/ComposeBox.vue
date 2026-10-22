@@ -42,7 +42,6 @@ async function submit() {
   <form :class="['compose', { reply: replyTo }]" @submit.prevent="submit">
     <p v-if="replyTo" class="replying">
       ↳ Replying to <a :href="replyHref" target="_blank" rel="noopener">{{ replyTo.author?.name ?? replyTo.id }}</a>
-      <button type="button" class="link" @click="emit('cancelReply')">cancel</button>
     </p>
     <textarea
       ref="textarea"
@@ -55,6 +54,7 @@ async function submit() {
     />
     <div class="compose-footer">
       <span v-if="error" class="error">{{ error }}</span>
+      <button v-if="replyTo" type="button" class="secondary" @click="emit('cancelReply')">Cancel</button>
       <button type="submit" class="primary" :disabled="busy || !text.trim()">
         {{ replyTo ? 'Reply' : 'Post' }}
       </button>
