@@ -551,7 +551,7 @@ Entries from plain feeds are ordinary unverified entries (see [Ingest and Verifi
 
 ### Ingest and Verification
 
-Entries reach an aggregator by many paths: polling member and followed feeds, WebMention (amagg fetches the `source`), other aggregators' timelines, a source's `replies.atom`, WebSub pushes, fetching a missing parent. Many of these relay entries by authors other than whoever serves them, and replies often come from plain blogs that don't sign at all.
+Entries reach an aggregator by many paths: polling member and followed feeds, WebMention (amagg fetches the `source`), other aggregators' timelines, WebSub pushes, fetching a missing parent. Many of these relay entries by authors other than whoever serves them, and replies often come from plain blogs that don't sign at all.
 
 Every path is handled the same way: **accept the entry, verify if possible, and record the result.**
 
@@ -629,7 +629,7 @@ None of these are signed fields, so the signature stays valid.
 
 A reply is just an Atom entry on the replier's feed server, with `thr:in-reply-to`. Threads are matched by `ref` (the Atom entry `id`), never by `href`, since every aggregator shows the same post under its own URL.
 
-Threads are per island: a thread shows the replies this aggregator has. Frontends show the aggregator's thread and don't offer the source's `replies.atom`.
+Threads are per island: a thread shows the replies this aggregator has. Neither aggregators nor frontends pull in the source's `replies.atom`.
 
 #### Inside an Island
 
@@ -653,7 +653,7 @@ The source is where islands meet. Its `replies.atom` collects replies forwarded 
                          /posts/42/replies.atom   ← all replies, all islands
 ```
 
-An aggregator that wants replies from other islands MAY pull the source's `replies.atom`. Isolation is the default; bridging islands is an explicit choice.
+`replies.atom` is for the author, not for islands: it is the author's view of every reply their post received.
 
 #### Replies from Outside the Island
 
