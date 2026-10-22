@@ -762,12 +762,14 @@ The frontend keeps the shared lists up to date. It already holds the posting tok
 
 ### Storage
 
-- SQLite (WAL mode) for user accounts, follow graph, merged entries, WebMention records, WebSub subscription state
-- Poll scheduling: a `next_poll_at` column and an in-process scheduler goroutine
-- Rate limiting: in-memory token buckets
-- Timelines are computed at query time (entries joined with follows, ordered), no per-user fan-out
+The protocol doesn't prescribe storage: a timeline is just a paged Atom feed, however it is produced. An aggregator can compute timelines on read, precompute them per user on ingest (fan-out), or mix both.
 
-Storage sits behind an interface, so a Postgres backend can be added if an aggregator outgrows SQLite.
+The reference implementation uses:
+- SQLite (WAL mode) for members, tokens, invites, follows, feeds with their polling state, and entries (one row per entry `id`, stored as received, however many members follow its feed)
+- Poll scheduling: a `next_poll` column and an in-process poller goroutine
+- Login challenges in memory
+- Timelines computed at query time (entries joined with members' feeds and follows, ordered), no per-user fan-out
+- No retention: entries are kept indefinitely
 
 ---
 
