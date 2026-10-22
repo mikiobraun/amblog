@@ -22,7 +22,7 @@ it('renders the feed with verified signatures and own-post actions', async () =>
 
   const fetchMock = vi.fn(async (url: string) => {
     if (url === 'http://localhost:8198/feed.atom') return new Response(feedXML)
-    if (url === 'http://localhost:8198/.well-known/atomic-keys') return Response.json(keysJSON)
+    if (url === 'http://localhost:8198/atomic-keys') return Response.json(keysJSON)
     return new Response('not found', { status: 404 })
   })
   vi.stubGlobal('fetch', fetchMock)

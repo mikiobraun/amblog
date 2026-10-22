@@ -35,5 +35,5 @@ am rm 5
 
 mkdir -p "$OUT"
 curl -s $BASE/feed.atom > "$OUT/feed.atom"
-curl -s $BASE/.well-known/atomic-keys > "$OUT/keys.json"
+curl -s $BASE/atomic-keys > "$OUT/keys.json"
 echo "wrote $OUT"

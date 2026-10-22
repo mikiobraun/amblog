@@ -11,6 +11,7 @@ type pageData struct {
 	AuthorName string
 	AuthorURI  string
 	FeedURL    string
+	KeysURL    string
 	Entries    []pageEntry
 }
 
@@ -31,6 +32,7 @@ func (s *Server) pageData(entries []*Entry) pageData {
 		AuthorName: s.cfg.Feed.AuthorName,
 		AuthorURI:  s.cfg.Feed.AuthorURI,
 		FeedURL:    s.feedURL(),
+		KeysURL:    s.keysURL,
 	}
 	for _, e := range entries {
 		pe := pageEntry{
@@ -95,7 +97,7 @@ const entriesHTML = `{{define "entries"}}{{range .Entries}}
 var profileTemplate = template.Must(template.Must(template.New("base").Parse(baseHTML)).Parse(entriesHTML + `
 {{define "body"}}
 <h1>{{.AuthorName}}</h1>
-<p class="meta"><a href="{{.FeedURL}}">Atom feed</a> · <a href="/.well-known/atomic-keys">signing keys</a></p>
+<p class="meta"><a href="{{.FeedURL}}">Atom feed</a> · <a href="{{.KeysURL}}">signing keys</a></p>
 {{template "entries" .}}
 {{end}}`))
 

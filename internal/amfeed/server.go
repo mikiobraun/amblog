@@ -6,18 +6,20 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"atomicmicro.blog/internal/atom"
+	"atomicmicro.blog/internal/paging"
 	"atomicmicro.blog/internal/sign"
+	"atomicmicro.blog/internal/web"
 )
 
 const (
@@ -26,16 +28,30 @@ const (
 	maxPageSize     = 100
 	// Atom requires feed/updated; an empty feed has never been updated.
 	emptyFeedUpdated = "1970-01-01T00:00:00Z"
+
+	challengeTTL      = 10 * time.Minute
+	maxChallengeValue = 256
 )
 
 type Server struct {
 	cfg          *Config
 	store        *Store
 	key          ed25519.PrivateKey
-	host         string // base URL hostname, used in tag: ids
+	idPrefix     string // "tag:<host>,", followed by "<YYYY-MM>:<idPath>post-<n>"
+	idPath       string // base URL port and path plus "/", or "" when it has neither
+	keysURL      string
 	feedPageSize int
 	now          func() time.Time
-	mux          *http.ServeMux
+	handler      http.Handler
+
+	mu         sync.Mutex
+	challenges map[string]challenge // login challenges by token, kept in memory
+}
+
+// challenge is a published login challenge (see the spec, "Registration and Login").
+type challenge struct {
+	value   string
+	expires time.Time
 }
 
 func NewServer(cfg *Config, store *Store, key ed25519.PrivateKey) (*Server, error) {
@@ -43,39 +59,41 @@ func NewServer(cfg *Config, store *Store, key ed25519.PrivateKey) (*Server, erro
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{cfg: cfg, store: store, key: key, host: u.Hostname(), feedPageSize: feedPageSize, now: time.Now, mux: http.NewServeMux()}
+	keysURL, err := sign.KeysURL(cfg.Feed.AuthorURI)
+	if err != nil {
+		return nil, err
+	}
+	// Tag URI authorities have no port, so a port goes into the path part:
+	// feeds on the same host must not mint the same ids.
+	idPath := strings.Trim(u.Port()+"/"+strings.Trim(u.Path, "/"), "/")
+	if idPath != "" {
+		idPath += "/"
+	}
+	s := &Server{cfg: cfg, store: store, key: key, idPrefix: "tag:" + u.Hostname() + ",", idPath: idPath, keysURL: keysURL,
+		feedPageSize: feedPageSize, now: time.Now, challenges: map[string]challenge{}}
 
-	s.mux.HandleFunc("GET /{$}", s.handleProfile)
-	s.mux.HandleFunc("GET /feed.atom", s.handleFeed)
-	s.mux.HandleFunc("GET /posts/{seq}", s.handlePost)
-	s.mux.HandleFunc("GET "+sign.WellKnownPath, s.handleKeys)
-	s.mux.HandleFunc("POST /api/entries", s.requireToken(false, s.handleCreateEntry))
-	s.mux.HandleFunc("GET /api/entries", s.requireToken(false, s.handleListEntries))
-	s.mux.HandleFunc("DELETE /api/entries/{seq}", s.requireToken(false, s.handleDeleteEntry))
-	s.mux.HandleFunc("POST /api/tokens", s.requireToken(true, s.handleCreateToken))
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /{$}", s.handleProfile)
+	mux.HandleFunc("GET /feed.atom", s.handleFeed)
+	mux.HandleFunc("GET /posts/{seq}", s.handlePost)
+	mux.HandleFunc("GET /"+sign.KeysPath, s.handleKeys)
+	mux.HandleFunc("GET /"+sign.ChallengePath+"/{token}", s.handleGetChallenge)
+	mux.HandleFunc("POST /api/entries", s.requireToken(false, s.handleCreateEntry))
+	mux.HandleFunc("GET /api/entries", s.requireToken(false, s.handleListEntries))
+	mux.HandleFunc("DELETE /api/entries/{seq}", s.requireToken(false, s.handleDeleteEntry))
+	mux.HandleFunc("POST /api/tokens", s.requireToken(true, s.handleCreateToken))
+	mux.HandleFunc("PUT /api/challenges/{token}", s.requireToken(false, s.handlePutChallenge))
+	s.handler = web.CORS(mux, "GET, POST, PUT, DELETE, OPTIONS")
 	return s, nil
 }
 
-// ServeHTTP adds CORS headers to every response. This is safe because
-// authentication is bearer tokens only, never cookies.
-func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	h := w.Header()
-	h.Set("Access-Control-Allow-Origin", "*")
-	h.Set("Access-Control-Expose-Headers", "Location, ETag")
-	if r.Method == http.MethodOptions {
-		h.Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-		h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	s.mux.ServeHTTP(w, r)
-}
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.handler.ServeHTTP(w, r) }
 
 // --- Atom ---
 
 func (s *Server) feedURL() string { return s.cfg.Feed.BaseURL + "/feed.atom" }
 
-func (s *Server) feedPageURL(before *Cursor) string {
+func (s *Server) feedPageURL(before *paging.Cursor) string {
 	if before == nil {
 		return s.feedURL()
 	}
@@ -283,7 +301,7 @@ func (s *Server) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 	e, err := s.store.CreateEntry(func(seq int64) (*Entry, error) {
 		e := &Entry{
 			Seq:         seq,
-			ID:          fmt.Sprintf("tag:%s,%s:post-%d", s.host, now.Format("2006-01"), seq),
+			ID:          fmt.Sprintf("%s%s:%spost-%d", s.idPrefix, now.Format("2006-01"), s.idPath, seq),
 			Published:   nowStr,
 			Updated:     nowStr,
 			Title:       req.Title,
@@ -383,17 +401,80 @@ func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{"token": token, "name": req.Name, "expires": req.Expires})
 }
 
+// --- login challenges ---
+
+// handlePutChallenge publishes a login challenge for an aggregator. The value
+// is stored as is; amfeed doesn't interpret it.
+func (s *Server) handlePutChallenge(w http.ResponseWriter, r *http.Request) {
+	token := r.PathValue("token")
+	if !validChallengeToken(token) {
+		writeError(w, http.StatusBadRequest, "challenge token must be 1 to 128 base64url characters")
+		return
+	}
+	body := make([]byte, maxChallengeValue+1)
+	n, _ := io.ReadFull(r.Body, body)
+	value := string(body[:n])
+	if n == 0 || n > maxChallengeValue || !printableASCII(value) {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("challenge value must be 1 to %d printable ASCII characters", maxChallengeValue))
+		return
+	}
+	now := s.now()
+	s.mu.Lock()
+	for t, c := range s.challenges {
+		if !now.Before(c.expires) {
+			delete(s.challenges, t)
+		}
+	}
+	s.challenges[token] = challenge{value: value, expires: now.Add(challengeTTL)}
+	s.mu.Unlock()
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleGetChallenge(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	c, ok := s.challenges[r.PathValue("token")]
+	s.mu.Unlock()
+	if !ok || !s.now().Before(c.expires) {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	io.WriteString(w, c.value)
+}
+
+func validChallengeToken(t string) bool {
+	if len(t) == 0 || len(t) > 128 {
+		return false
+	}
+	for _, c := range t {
+		if !('a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' || '0' <= c && c <= '9' || c == '-' || c == '_') {
+			return false
+		}
+	}
+	return true
+}
+
+func printableASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < 0x20 || s[i] > 0x7e {
+			return false
+		}
+	}
+	return true
+}
+
 // --- helpers ---
 
 func (s *Server) requireToken(admin bool, h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if !ok || token == "" {
+		token, ok := web.BearerToken(r)
+		if !ok {
 			w.Header().Set("WWW-Authenticate", "Bearer")
 			writeError(w, http.StatusUnauthorized, "bearer token required")
 			return
 		}
-		isAdmin, err := s.store.CheckToken(HashToken(token))
+		isAdmin, err := s.store.CheckToken(web.HashToken(token))
 		if errors.Is(err, ErrNotFound) {
 			w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)
 			writeError(w, http.StatusUnauthorized, "invalid or expired token")
@@ -431,12 +512,12 @@ func (s *Server) entryFromPath(w http.ResponseWriter, r *http.Request) (*Entry, 
 
 // cursorParam parses the optional ?before= cursor. It writes a 400 and
 // returns ok = false if the cursor is malformed.
-func cursorParam(w http.ResponseWriter, r *http.Request) (before *Cursor, ok bool) {
+func cursorParam(w http.ResponseWriter, r *http.Request) (before *paging.Cursor, ok bool) {
 	v := r.URL.Query().Get("before")
 	if v == "" {
 		return nil, true
 	}
-	c, err := ParseCursor(v)
+	c, err := paging.ParseCursor(v)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return nil, false
@@ -444,27 +525,10 @@ func cursorParam(w http.ResponseWriter, r *http.Request) (before *Cursor, ok boo
 	return &c, true
 }
 
-func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(v); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
-		return false
-	}
-	return true
-}
+var (
+	decodeJSON = web.DecodeJSON
+	writeJSON  = web.WriteJSON
+	writeError = web.WriteError
+)
 
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
-}
-
-func writeError(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, map[string]string{"error": msg})
-}
-
-func (s *Server) serverError(w http.ResponseWriter, err error) {
-	log.Printf("internal error: %v", err)
-	writeError(w, http.StatusInternalServerError, "internal error")
-}
+func (s *Server) serverError(w http.ResponseWriter, err error) { web.ServerError(w, err) }

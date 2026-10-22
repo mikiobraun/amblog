@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"atomicmicro.blog/internal/atom"
-	"atomicmicro.blog/internal/sign"
 	"github.com/BurntSushi/toml"
 )
 
@@ -20,6 +19,11 @@ import (
 type Config struct {
 	FeedURL string `toml:"feed_url"`
 	Token   string `toml:"token"`
+
+	// Set by "am login".
+	AggURL      string `toml:"agg_url,omitempty"`
+	AggToken    string `toml:"agg_token,omitempty"`
+	TimelineURL string `toml:"timeline_url,omitempty"`
 }
 
 func configPath() (string, error) {
@@ -84,51 +88,74 @@ func newFeedClient() (*feedClient, error) {
 
 // do sends a JSON request and decodes a JSON response into out (if non-nil).
 func (c *feedClient) do(method, path string, in, out any) error {
+	return doJSON(method, c.cfg.FeedURL+path, c.cfg.Token, in, out)
+}
+
+// doJSON sends a request with an optional JSON body and bearer token, and
+// decodes a JSON response into out (if non-nil).
+func doJSON(method, url, token string, in, out any) error {
 	var body io.Reader
+	contentType := ""
 	if in != nil {
 		data, err := json.Marshal(in)
 		if err != nil {
 			return err
 		}
-		body = bytes.NewReader(data)
+		body, contentType = bytes.NewReader(data), "application/json"
 	}
-	req, err := http.NewRequest(method, c.cfg.FeedURL+path, body)
-	if err != nil {
+	data, err := doRequest(method, url, token, contentType, body)
+	if err != nil || out == nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.cfg.Token)
-	if in != nil {
-		req.Header.Set("Content-Type", "application/json")
+	return json.Unmarshal(data, out)
+}
+
+// doRequest sends a request and returns the response body; statuses >= 300
+// are errors, with the server's error message if it sent one.
+func doRequest(method, url, token, contentType string, body io.Reader) ([]byte, error) {
+	req, err := http.NewRequest(method, url, body)
+	if err != nil {
+		return nil, err
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
 	}
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if resp.StatusCode >= 300 {
 		var e struct{ Error string }
 		if json.Unmarshal(data, &e) == nil && e.Error != "" {
-			return fmt.Errorf("%s %s: %s: %s", method, path, resp.Status, e.Error)
+			return nil, fmt.Errorf("%s %s: %s: %s", method, url, resp.Status, e.Error)
 		}
-		return fmt.Errorf("%s %s: %s", method, path, resp.Status)
+		return nil, fmt.Errorf("%s %s: %s", method, url, resp.Status)
 	}
-	if out != nil {
-		return json.Unmarshal(data, out)
-	}
-	return nil
+	return data, nil
 }
 
 // fetchAtom fetches a feed or entry document from any URL.
-func fetchAtom(url string) (*atom.Feed, error) {
+func fetchAtom(url string) (*atom.Feed, error) { return fetchAtomWith(url, "") }
+
+// fetchAtomWith fetches a feed or entry document, with a bearer token if
+// token is not empty.
+func fetchAtomWith(url, token string) (*atom.Feed, error) {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Accept", atom.MediaType)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
@@ -146,42 +173,4 @@ func fetchAtom(url string) (*atom.Feed, error) {
 		return nil, fmt.Errorf("GET %s: %w", url, err)
 	}
 	return f, nil
-}
-
-// keyCache fetches and remembers key documents per author URI.
-type keyCache map[string]*sign.KeyDoc
-
-func (kc keyCache) get(authorURI string) (*sign.KeyDoc, error) {
-	if doc, ok := kc[authorURI]; ok {
-		return doc, nil
-	}
-	url, err := sign.KeysURL(authorURI)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := httpClient.Get(url)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GET %s: %s", url, resp.Status)
-	}
-	var doc sign.KeyDoc
-	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
-		return nil, fmt.Errorf("GET %s: %w", url, err)
-	}
-	kc[authorURI] = &doc
-	return &doc, nil
-}
-
-func (kc keyCache) verify(e *atom.Entry) error {
-	if e.Author == nil || e.Author.URI == "" {
-		return errors.New("entry has no author uri")
-	}
-	keys, err := kc.get(e.Author.URI)
-	if err != nil {
-		return err
-	}
-	return sign.Verify(e, keys)
 }

@@ -4,7 +4,8 @@
 import type { Entry } from './atom'
 
 export const ALGORITHM = 'ed25519'
-export const WELL_KNOWN_PATH = '/.well-known/atomic-keys'
+/** The key document's path relative to the author URI. */
+export const KEYS_PATH = 'atomic-keys'
 
 export interface Key {
   id: string
@@ -58,8 +59,18 @@ export function signingInput(e: Entry): string {
   return fields.map(([name, value]) => `${name}: ${escape(value)}`).join('\n')
 }
 
+/**
+ * Returns the key document URL for an author URI: KEYS_PATH appended to the
+ * URI's path, so identities with a path (https://host.example/alice) get their
+ * own key document.
+ */
 export function keysURL(authorURI: string): string {
-  return new URL(WELL_KNOWN_PATH, authorURI).toString()
+  const u = new URL(authorURI)
+  if (u.search !== '' || u.hash !== '') {
+    throw new Error(`author uri "${authorURI}" has a query or fragment`)
+  }
+  u.pathname = u.pathname.replace(/\/$/, '') + '/' + KEYS_PATH
+  return u.toString()
 }
 
 function base64Bytes(s: string): Uint8Array<ArrayBuffer> {

@@ -94,7 +94,7 @@ func (env *testEnv) expect(resp *http.Response, body string, status int) {
 
 func (env *testEnv) keys() *sign.KeyDoc {
 	env.t.Helper()
-	resp, body := env.do("GET", sign.WellKnownPath, "", "")
+	resp, body := env.do("GET", "/"+sign.KeysPath, "", "")
 	env.expect(resp, body, 200)
 	var doc sign.KeyDoc
 	if err := json.Unmarshal([]byte(body), &doc); err != nil {
@@ -120,6 +120,42 @@ func (env *testEnv) feed() *atom.Feed {
 	return f
 }
 
+// An identity with a path (as on a shared host) gets its own key document and
+// tag: ids that can't collide with other identities on the same host.
+func TestPathIdentity(t *testing.T) {
+	env := newTestEnv(t)
+	cfg := *env.srv.cfg
+	cfg.Feed.BaseURL = "https://amhost.example/mikio"
+	cfg.Feed.AuthorURI = "https://amhost.example/mikio/"
+	srv, err := NewServer(&cfg, env.srv.store, env.srv.key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	do := func(method, path, token, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		return rec
+	}
+
+	if rec := do("POST", "/api/entries", env.admin, `{"content":"hi"}`); rec.Code != 201 {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body)
+	}
+	f, err := atom.Parse(do("GET", "/feed.atom", "", "").Body.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id := f.Entries[0].ID; !strings.HasPrefix(id, "tag:amhost.example,") || !strings.HasSuffix(id, ":mikio/post-1") {
+		t.Errorf("entry id = %q", id)
+	}
+	if body := do("GET", "/", "", "").Body.String(); !strings.Contains(body, `href="https://amhost.example/mikio/atomic-keys"`) {
+		t.Errorf("profile doesn't link the key document: %s", body)
+	}
+}
+
 func TestPostFeedDelete(t *testing.T) {
 	env := newTestEnv(t)
 
@@ -137,7 +173,9 @@ func TestPostFeedDelete(t *testing.T) {
 		t.Fatalf("unexpected feed entries: %+v", f.Entries)
 	}
 	first := f.Entries[0]
-	if !strings.HasPrefix(first.ID, "tag:127.0.0.1,") || !strings.HasSuffix(first.ID, ":post-1") {
+	// The port goes into the path part, so feeds on one host don't collide.
+	port := env.url[strings.LastIndex(env.url, ":")+1:]
+	if !strings.HasPrefix(first.ID, "tag:127.0.0.1,") || !strings.HasSuffix(first.ID, ":"+port+"/post-1") {
 		t.Errorf("entry id = %q", first.ID)
 	}
 
@@ -276,6 +314,40 @@ func TestTokens(t *testing.T) {
 	json.Unmarshal([]byte(body), &created)
 	resp, body = env.do("POST", "/api/entries", created.Token, `{"content":"expired"}`)
 	env.expect(resp, body, 401)
+}
+
+func TestChallenges(t *testing.T) {
+	env := newTestEnv(t)
+	const value = "abc_DEF-123.https://agg.example"
+
+	resp, body := env.do("PUT", "/api/challenges/abc_DEF-123", "", value)
+	env.expect(resp, body, 401)
+	resp, body = env.do("PUT", "/api/challenges/abc_DEF-123", env.admin, value)
+	env.expect(resp, body, 204)
+
+	resp, body = env.do("GET", "/atomic-challenge/abc_DEF-123", "", "")
+	env.expect(resp, body, 200)
+	if body != value {
+		t.Errorf("challenge = %q, want %q", body, value)
+	}
+	resp, body = env.do("GET", "/atomic-challenge/unknown", "", "")
+	env.expect(resp, body, 404)
+
+	for _, bad := range []struct{ token, value string }{
+		{"has.dot", value},
+		{"ok", ""},
+		{"ok", "line\nbreak"},
+		{"ok", strings.Repeat("x", maxChallengeValue+1)},
+	} {
+		resp, body = env.do("PUT", "/api/challenges/"+bad.token, env.admin, bad.value)
+		if resp.StatusCode != 400 {
+			t.Errorf("PUT %q %q: status %d, want 400: %s", bad.token, bad.value, resp.StatusCode, body)
+		}
+	}
+
+	env.clock = env.clock.Add(challengeTTL)
+	resp, body = env.do("GET", "/atomic-challenge/abc_DEF-123", "", "")
+	env.expect(resp, body, 404)
 }
 
 func TestCreateEntryValidation(t *testing.T) {

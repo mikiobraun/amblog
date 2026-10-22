@@ -9,12 +9,17 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 )
 
-const WellKnownPath = "/.well-known/atomic-keys"
+// Paths relative to the author URI (see IdentityURL).
+const (
+	KeysPath      = "atomic-keys"      // the key document
+	ChallengePath = "atomic-challenge" // login challenges: <ChallengePath>/<token>
+)
 
-// KeyDoc is the JSON document served at /.well-known/atomic-keys.
+// KeyDoc is the JSON document served at <author URI>/atomic-keys.
 type KeyDoc struct {
 	Keys []Key `json:"keys"`
 }
@@ -59,16 +64,28 @@ func (k *Key) Ed25519() (ed25519.PublicKey, error) {
 	return ed25519.PublicKey(b), nil
 }
 
-// KeysURL returns the key document URL for an author URI.
-func KeysURL(authorURI string) (string, error) {
+// KeysURL returns the key document URL for an author URI: KeysPath appended
+// to the URI's path, so identities with a path (https://host.example/alice)
+// get their own key document.
+func KeysURL(authorURI string) (string, error) { return IdentityURL(authorURI, KeysPath) }
+
+// IdentityURL returns the URL of rel (a relative path like "atomic-keys")
+// under an identity: rel appended to the author URI's path, ignoring a
+// trailing slash. Author URIs with a query or fragment are rejected.
+func IdentityURL(authorURI, rel string) (string, error) {
 	u, err := url.Parse(authorURI)
 	if err != nil {
 		return "", err
 	}
-	if !u.IsAbs() {
+	if !u.IsAbs() || u.Host == "" {
 		return "", fmt.Errorf("sign: author uri %q is not absolute", authorURI)
 	}
-	return u.ResolveReference(&url.URL{Path: WellKnownPath}).String(), nil
+	if u.RawQuery != "" || u.Fragment != "" {
+		return "", fmt.Errorf("sign: author uri %q has a query or fragment", authorURI)
+	}
+	u.Path = strings.TrimSuffix(u.Path, "/") + "/" + rel
+	u.RawPath = ""
+	return u.String(), nil
 }
 
 func GenerateKey() (ed25519.PrivateKey, error) {

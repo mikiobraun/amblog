@@ -1,16 +1,13 @@
 package amfeed
 
 import (
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
 	"time"
 
 	"atomicmicro.blog/internal/sign"
+	"atomicmicro.blog/internal/web"
 )
 
 const ConfigFile = "amfeed.toml"
@@ -78,14 +75,4 @@ func Init(dir string, opts InitOptions) (configPath, adminToken string, err erro
 }
 
 // GenerateToken returns a new random bearer token and the hash to store.
-func GenerateToken() (token, hash string) {
-	b := make([]byte, 32)
-	rand.Read(b)
-	token = "amf_" + base64.RawURLEncoding.EncodeToString(b)
-	return token, HashToken(token)
-}
-
-func HashToken(token string) string {
-	sum := sha256.Sum256([]byte(token))
-	return hex.EncodeToString(sum[:])
-}
+func GenerateToken() (token, hash string) { return web.NewToken("amf_") }

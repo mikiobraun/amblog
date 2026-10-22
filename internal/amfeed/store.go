@@ -3,11 +3,9 @@ package amfeed
 import (
 	"database/sql"
 	"errors"
-	"fmt"
-	"strconv"
-	"strings"
 	"time"
 
+	"atomicmicro.blog/internal/paging"
 	_ "modernc.org/sqlite"
 )
 
@@ -140,45 +138,18 @@ func (s *Store) GetEntry(seq int64) (*Entry, error) {
 	return scanEntry(s.db.QueryRow(`SELECT `+entryColumns+` FROM entries WHERE seq = ?`, seq))
 }
 
-// Cursor marks a position in feed order (updated desc, seq desc). Its text
-// form is "<updated>,<seq>", e.g. "2026-10-21T21:07:11Z,3".
-type Cursor struct {
-	Updated string
-	Seq     int64
-}
-
-func (c Cursor) String() string { return c.Updated + "," + strconv.FormatInt(c.Seq, 10) }
-
-func ParseCursor(s string) (Cursor, error) {
-	updated, seqStr, ok := strings.Cut(s, ",")
-	if !ok {
-		return Cursor{}, fmt.Errorf("cursor %q: want <updated>,<seq>", s)
-	}
-	// Timestamps are compared as strings, so only the canonical format we
-	// write is accepted.
-	t, err := time.Parse(time.RFC3339, updated)
-	if err != nil || t.UTC().Format(time.RFC3339) != updated {
-		return Cursor{}, fmt.Errorf("cursor %q: updated must be an RFC 3339 UTC timestamp like 2026-10-21T21:07:11Z", s)
-	}
-	seq, err := strconv.ParseInt(seqStr, 10, 64)
-	if err != nil {
-		return Cursor{}, fmt.Errorf("cursor %q: bad post number", s)
-	}
-	return Cursor{Updated: updated, Seq: seq}, nil
-}
-
 // ListEntries returns up to limit entries in feed order: most recently
 // updated first, ties broken by seq. before = nil starts at the top. next is
 // the cursor for the following page, or nil if this is the last one.
 //
 // Timestamps compare correctly as strings because they are all RFC 3339 UTC
 // with second precision.
-func (s *Store) ListEntries(before *Cursor, limit int) (entries []*Entry, next *Cursor, err error) {
+func (s *Store) ListEntries(before *paging.Cursor, limit int) (entries []*Entry, next *paging.Cursor, err error) {
 	query := `SELECT ` + entryColumns + ` FROM entries`
 	var args []any
 	if before != nil {
 		query += ` WHERE (updated, seq) < (?, ?)`
-		args = append(args, before.Updated, before.Seq)
+		args = append(args, before.Time, before.Seq)
 	}
 	query += ` ORDER BY updated DESC, seq DESC LIMIT ?`
 	args = append(args, limit+1) // one extra to know whether there is a next page
@@ -201,7 +172,7 @@ func (s *Store) ListEntries(before *Cursor, limit int) (entries []*Entry, next *
 	if len(entries) > limit {
 		entries = entries[:limit]
 		last := entries[limit-1]
-		next = &Cursor{Updated: last.Updated, Seq: last.Seq}
+		next = &paging.Cursor{Time: last.Updated, Seq: last.Seq}
 	}
 	return entries, next, nil
 }

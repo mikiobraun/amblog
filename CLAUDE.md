@@ -2,25 +2,29 @@
 
 Atomic Micro Blogging: a decentralized social network built from existing web standards (Atom, RFC 4685 threading, WebSub, WebMention). Social networking is split into three independently swappable parts: **amfeed** (publishing), **amagg** (aggregation), **amfront** (presentation).
 
-**The spec is the source of truth: [atomic-micro-blogging.md](atomic-micro-blogging.md).** Read the relevant section before changing behavior. When a design decision changes, update the spec in the same change, and keep its Open Questions section current.
+**The spec is the source of truth: [atomic-micro-blogging.md](atomic-micro-blogging.md).** Read the relevant section before changing behavior. When a design decision changes, update the spec in the same change, and keep its Open Questions section current. The spec describes the current design only: no history ("was", "added back", "resolved"), no per-decision rationale. Reasons belong in the Design Principles (§1); add or sharpen a principle instead of explaining a single decision.
 
 ## Status
 
-- **amfeed** (Go): done for v1 — entries, signing, tokens, paged feed, tombstone deletes.
-- **am** (Go CLI): config, post, reply, ls, rm, token create, show (with signature verification).
-- **amfront** (Vue): settings, timeline from any Atom feed, compose/reply/delete, in-browser signature verification.
-- **amagg**: not started. Next big piece.
-- Not yet built: WebMention (receiving in amfeed/amagg, forwarding in amagg), proof-of-work challenge, WebSub, `replies.atom`, media.
+- **amfeed** (Go): done for v1 — entries, signing, tokens, paged feed, tombstone deletes, login challenges.
+- **am** (Go CLI): config, post, reply, ls, rm, token create, show (with signature verification); login, follow, unfollow, following, timeline (aggregator).
+- **amfront** (Vue): settings, timeline from any Atom feed, compose/reply/delete, in-browser signature verification. No aggregator login yet.
+- **amagg** (Go): roadmap Phase 2 steps 1–6 — challenge login with invites, follows, polling/ingest with verification and the replacement rule, island + member timelines, re-served entries, post pages, OPML export, public/private.
+- Not yet built: amagg threading + missing parents, feed reader Basic auth, feed proxy; WebMention, proof-of-work, WebSub, `replies.atom`, media.
 
 ## Layout
 
 ```
 atomic-micro-blogging.md   the spec
 cmd/amfeed/                feed server binary: `amfeed init`, `amfeed serve`
+cmd/amagg/                 aggregator binary: `amagg init`, `amagg serve` (server + poller), `amagg invite`
 cmd/am/                    CLI client (talks HTTP only; config in $AM_CONFIG or ~/.config/am/config.toml)
 internal/atom/             Atom types, parse/marshal (shared by all Go components)
-internal/sign/             signing input, Ed25519 sign/verify, key document, PEM key files
+internal/sign/             signing input, Ed25519 sign/verify, key document, KeyCache, identity URLs, PEM key files
+internal/paging/           RFC 5005 ?before= cursor (amfeed + amagg)
+internal/web/              shared HTTP helpers: JSON, CORS, bearer tokens
 internal/amfeed/           config (TOML), SQLite store, HTTP server, HTML pages, init
+internal/amagg/            config, store, login (challenge), fetch/discovery, ingest, poll, follow, timeline, HTML
 amfront/                   Vue 3 + Vite + TypeScript static client
   src/lib/atom.ts          Atom parsing (mirrors internal/atom)
   src/lib/sign.ts          signing input + Web Crypto verification (mirrors internal/sign)
@@ -37,7 +41,7 @@ site/                      landing page + Caddyfile for atomicmicro.blog (serves
 # Go (module atomicmicro.blog, workspace via ~/Projects/go.work)
 go test ./...
 go vet ./...
-go build -o . ./cmd/...          # ./amfeed and ./am (gitignored)
+go build -o . ./cmd/...          # ./amfeed, ./amagg and ./am (gitignored)
 
 # amfront
 cd amfront
@@ -55,6 +59,8 @@ caddy validate --config site/Caddyfile --adapter caddyfile
 
 Local end-to-end: `./amfeed init -dir data -base-url http://localhost:8100 -name Test`, `./amfeed serve -config data/amfeed.toml`, `./am config -feed http://localhost:8100 -token <admin token>`. `data/` is gitignored.
 
+With an aggregator: `./amagg init -dir data/agg -base-url http://localhost:8200 -name Test`, `./amagg serve -config data/agg/amagg.toml`, `./am login -invite $(./amagg invite -config data/agg/amagg.toml) http://localhost:8200`, then `./am follow URL`, `./am timeline`. Login needs HTTPS identity URLs except on loopback hosts.
+
 ## Design principles
 
 - **Simple and explicit over clever.** Fail loudly with a clear message instead of guessing. Examples in the code: unknown TOML keys are errors, JSON request bodies reject unknown fields, malformed page cursors return 400, signed content types are restricted to `text`/`html`.
@@ -67,6 +73,7 @@ Local end-to-end: `./amfeed init -dir data -base-url http://localhost:8100 -name
 ### Entry signing
 - The signature covers a **fixed list of fields, not the XML**: `id, author, published, updated, in-reply-to, verb, title, summary, content-type, content`, then zero or more `enclosure` lines. One `name: value` per line, joined by `\n`, values escaped (`\` → `\\`, newline → `\n`, CR → `\r`). See spec "Entry Signing".
 - **Two implementations must stay identical**: `internal/sign/sign.go` and `amfront/src/lib/sign.ts`. Both have the same golden test value (`TestInput` / `signingInput matches the Go implementation`). Change both together, then regenerate fixtures.
+- Keys live at `<author URI>/atomic-keys`, appended to the author URI's **path** (not `/.well-known/`, not discovered via links). Identities may have a path (`https://amhost.example/mikio/`); never reduce an identity to its host anywhere.
 - Links, `via`, `atom:source`, WebMention endpoints are deliberately **not** signed, so aggregators can rewrite them.
 - `author` is part of the signed fields, and amfeed builds entries from the **current config**. Changing `base_url`/`author_uri` after posting invalidates existing signatures (identity = URL). Known gap: amfeed doesn't detect this yet.
 - Signed entries must carry their own `<author>` (not inherited from the feed).
@@ -81,12 +88,19 @@ Local end-to-end: `./amfeed init -dir data -base-url http://localhost:8100 -name
 - Pollers must treat entries with `updated` equal to the last seen value as possibly changed (second precision).
 
 ### Entries, IDs, deletes
-- Post numbers are sequential; IDs are `tag:<host>,<YYYY-MM>:post-<n>` and stored at creation (never recomputed).
+- Post numbers are sequential; IDs are `tag:<host>,<YYYY-MM>:<port and path>/post-<n>` (no `<…>/` part when the base URL has neither port nor path) and stored at creation (never recomputed). Ports matter: feeds on one host must not mint the same IDs.
 - Delete = tombstone: content and title cleared, ID kept, `updated` bumped, re-signed, stays in the feed. amfront recognizes tombstones by empty content+title+verb (safe because the API rejects empty posts). An explicit marker (e.g. RFC 6721) may replace this.
 
 ### Auth and CORS
 - **Bearer tokens only, never cookies.** That is what makes `Access-Control-Allow-Origin: *` safe on every endpoint. Don't introduce cookie auth.
 - Tokens are stored as SHA-256 hashes. The first admin token comes from `amfeed init` (local DB access); admin tokens can create posting tokens.
+
+### amagg ingest
+- Every ingest path goes through `ingest()`: verify if possible, else unverified + `fetched_from`. Replacement only via `mayReplace` (verified needs same author; unverified needs unverified + same `fetched_from`). Never add a path that writes entries around it.
+- Entries are keyed by Atom `id`; `feed_id` NULL means "not from a polled feed" (e.g. a fetched parent) and keeps the entry out of timelines.
+- Stored times (`sort_time`, `updated`, `last_seen`) are normalized to RFC 3339 UTC seconds so they compare as strings; `last_seen` never passes "now".
+- Login fetches the challenge **without redirects**; identity URIs must be HTTPS except on loopback hosts.
+- amagg post pages render untrusted feed HTML under a sandboxing CSP (`pageCSP`); keep that header on every HTML response.
 
 ### Threads and replies (for amagg)
 - Match threads by `thr:in-reply-to` **`ref`** (the Atom id), never by `href` — each aggregator serves posts under its own URLs.
@@ -101,6 +115,7 @@ Local end-to-end: `./amfeed init -dir data -base-url http://localhost:8100 -name
 ## Testing conventions
 
 - Go: `internal/amfeed/server_test.go` runs the real server via `httptest` (Init → LoadConfig → NewServer) and verifies signatures over HTTP. The server's clock is injectable (`srv.now`) — use `env.tick()` for deterministic `updated` ordering.
+- `internal/amagg/server_test.go` runs real amfeed servers (`startFeed`) plus amagg (`startAgg`) and goes through the full login flow (`agg.login`). `agg.poll()` advances amagg's clock and polls; plain-feed cases use a hand-written Atom server.
 - Cross-language: amfront tests verify fixtures produced by the Go server. If you touch signing or Atom serialization, run `amfront/scripts/gen-fixtures.sh` and both test suites.
 - Component tests mount Vue components directly with `createApp` in happy-dom and stub `fetch` (no @vue/test-utils).
 
@@ -115,4 +130,4 @@ Local end-to-end: `./amfeed init -dir data -base-url http://localhost:8100 -name
 
 - Personal dev setup stays out of the repo: `dev.yaml` and `amfront/.env*.local` are gitignored. amfront's dev-server hostnames go in `AMFRONT_ALLOWED_HOSTS` (env or `amfront/.env.local`).
 - Never commit `data/`, keys, databases or tokens.
-- Config files are TOML; relative paths in `amfeed.toml` resolve against the config file's directory.
+- Config files are TOML; relative paths in `amfeed.toml`/`amagg.toml` resolve against the config file's directory.

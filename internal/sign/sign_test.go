@@ -126,16 +126,20 @@ func TestVerifyUnsignedFieldsChange(t *testing.T) {
 
 func TestKeysURL(t *testing.T) {
 	for in, want := range map[string]string{
-		"https://miki.one/":      "https://miki.one/.well-known/atomic-keys",
-		"https://miki.one":       "https://miki.one/.well-known/atomic-keys",
-		"http://localhost:8100/": "http://localhost:8100/.well-known/atomic-keys",
+		"https://miki.one/":             "https://miki.one/atomic-keys",
+		"https://miki.one":              "https://miki.one/atomic-keys",
+		"http://localhost:8100/":        "http://localhost:8100/atomic-keys",
+		"https://amhost.example/mikio":  "https://amhost.example/mikio/atomic-keys",
+		"https://amhost.example/mikio/": "https://amhost.example/mikio/atomic-keys",
 	} {
 		got, err := KeysURL(in)
 		if err != nil || got != want {
 			t.Errorf("KeysURL(%q) = %q, %v; want %q", in, got, err, want)
 		}
 	}
-	if _, err := KeysURL("/relative"); err == nil {
-		t.Error("relative author uri: want error")
+	for _, in := range []string{"/relative", "https://miki.one/?u=1", "https://miki.one/#me"} {
+		if _, err := KeysURL(in); err == nil {
+			t.Errorf("KeysURL(%q): want error", in)
+		}
 	}
 }

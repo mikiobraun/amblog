@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"atomicmicro.blog/internal/sign"
 )
 
 const usageText = `usage: am <command> [flags] [args]
@@ -22,6 +24,12 @@ const usageText = `usage: am <command> [flags] [args]
   rm SEQ                               delete a post (leaves a tombstone)
   token create [-expires TIME] NAME    create a posting token (admin)
   show URL                             fetch a feed or entry, verify signatures
+
+  login [-invite CODE] AGGREGATOR_URL  log in to an aggregator (registers on first login)
+  follow URL                           follow a feed (or a page linking one)
+  unfollow FEED_URL                    stop following a feed
+  following                            list followed feeds
+  timeline [-island]                   show your timeline (or the island's)
 `
 
 func main() {
@@ -37,6 +45,12 @@ func main() {
 		"rm":     runRm,
 		"token":  runToken,
 		"show":   runShow,
+
+		"login":     runLogin,
+		"follow":    runFollow,
+		"unfollow":  runUnfollow,
+		"following": runFollowing,
+		"timeline":  runTimeline,
 	}
 	cmd, ok := cmds[os.Args[1]]
 	if !ok {
@@ -275,10 +289,10 @@ func runShow(args []string) error {
 	if f.Title != "" {
 		fmt.Printf("%s\n%s\n\n", f.Title, f.ID)
 	}
-	keys := keyCache{}
+	keys := sign.NewKeyCache(httpClient)
 	for _, e := range f.Entries {
 		status := "✓"
-		if err := keys.verify(e); err != nil {
+		if err := keys.Verify(e); err != nil {
 			status = "✗ " + err.Error()
 		}
 		fmt.Printf("%s %s\n", status, e.ID)

@@ -62,7 +62,7 @@ describe('verify against amfeed output', () => {
     const bodies = feed.entries.map((e) => e.content?.body)
     expect(bodies).toContain('line one\r\nline two\\with backslash\n\n  indented')
     expect(bodies).toContain('<p>HTML <em>content</em></p>')
-    expect(feed.entries.find((e) => e.inReplyTo)?.inReplyTo?.ref).toMatch(/:post-1$/)
+    expect(feed.entries.find((e) => e.inReplyTo)?.inReplyTo?.ref).toMatch(/:8198\/post-1$/)
   })
 
   it('verifies every entry', async () => {
@@ -85,9 +85,17 @@ describe('verify against amfeed output', () => {
 })
 
 describe('keysURL', () => {
-  it('resolves against the author uri', () => {
-    expect(keysURL('https://miki.one/')).toBe('https://miki.one/.well-known/atomic-keys')
-    expect(keysURL('https://miki.one')).toBe('https://miki.one/.well-known/atomic-keys')
-    expect(keysURL('http://localhost:8100/')).toBe('http://localhost:8100/.well-known/atomic-keys')
+  it('appends to the author uri path (same cases as TestKeysURL)', () => {
+    expect(keysURL('https://miki.one/')).toBe('https://miki.one/atomic-keys')
+    expect(keysURL('https://miki.one')).toBe('https://miki.one/atomic-keys')
+    expect(keysURL('http://localhost:8100/')).toBe('http://localhost:8100/atomic-keys')
+    expect(keysURL('https://amhost.example/mikio')).toBe('https://amhost.example/mikio/atomic-keys')
+    expect(keysURL('https://amhost.example/mikio/')).toBe('https://amhost.example/mikio/atomic-keys')
+  })
+
+  it('rejects relative uris, queries and fragments', () => {
+    for (const uri of ['/relative', 'https://miki.one/?u=1', 'https://miki.one/#me']) {
+      expect(() => keysURL(uri)).toThrow()
+    }
   })
 })
