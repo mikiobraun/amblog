@@ -25,6 +25,7 @@ type Server struct {
 	basicOK bool   // HTTP Basic allowed: base URL is https, or on a loopback host
 	now     func() time.Time
 	handler http.Handler
+	proxy   proxyCache
 
 	mu     sync.Mutex
 	logins map[string]pendingLogin // by challenge token
@@ -59,6 +60,7 @@ func NewServer(cfg *Config, store *Store) (*Server, error) {
 	mux.HandleFunc("DELETE /api/follow", s.requireUser(s.handleUnfollow))
 	mux.HandleFunc("GET /api/following", s.requireUser(s.handleFollowing))
 	mux.HandleFunc("GET /api/following/export", s.requireUser(s.handleFollowingExport))
+	mux.HandleFunc("GET /api/feed", s.requireUser(s.handleProxy))
 	mux.HandleFunc("POST /api/readers", s.requireUser(s.handleCreateReader))
 	mux.HandleFunc("GET /api/readers", s.requireUser(s.handleListReaders))
 	mux.HandleFunc("DELETE /api/readers/{id}", s.requireUser(s.handleDeleteReader))

@@ -727,7 +727,7 @@ List WebMentions received for a specific entry.
 
 #### `GET /api/feed?url={feed-url}`
 
-Proxy: fetch (and cache) any Atom feed on behalf of the client — profiles, reply feeds, feeds not yet followed. Token-authenticated, and only returns responses that parse as Atom, so it can't be used as an open proxy.
+Proxy: fetch (and briefly cache) any Atom feed or entry on behalf of the client — profiles, reply feeds, feeds not yet followed. Token-authenticated, and only returns responses that parse as Atom (`502` otherwise), so it can't be used as an open proxy.
 
 ### Follow Graph Portability
 
@@ -1085,7 +1085,7 @@ Others:     bring their own feeds and frontends
 - [x] `am`: login, follow, unfollow, following, timeline
 - [x] `amagg`: In-island threading, fetching missing parents
 - [x] `amagg`: Feed reader credentials (HTTP Basic), public/private island
-- [ ] `amagg`: Feed proxy
+- [x] `amagg`: Feed proxy
 - [ ] `amfront`: Aggregator login, timeline selection, thread view, feed reader passwords
 
 ### Phase 3: Interactions

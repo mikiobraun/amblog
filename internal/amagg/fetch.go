@@ -128,6 +128,15 @@ func hasToken(list, token string) bool {
 	return false
 }
 
+// checkFetchURL accepts absolute http(s) URLs only.
+func checkFetchURL(s string) (*url.URL, error) {
+	u, err := url.Parse(s)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return nil, fmt.Errorf("%q is not an absolute http(s) URL", s)
+	}
+	return u, nil
+}
+
 // checkIdentityURI validates and normalizes an author URI used as identity:
 // absolute, no query or fragment, HTTPS unless on a loopback host (for
 // development). An empty path becomes "/", so "https://miki.one" and

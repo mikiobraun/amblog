@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -556,6 +557,30 @@ func TestFeedReaders(t *testing.T) {
 	}
 	if got := basic(timeline, cred.Password); got != 401 {
 		t.Errorf("revoked password: %d", got)
+	}
+}
+
+func TestProxy(t *testing.T) {
+	agg := startAgg(t, nil)
+	alice, carol := startFeed(t, "Alice"), startFeed(t, "Carol")
+	session := agg.login(alice, agg.invite())
+	carol.post(t, `{"content":"via the proxy"}`)
+
+	proxy := "/api/feed?url=" + url.QueryEscape(carol.url+"/feed.atom")
+	if resp, _ := request(t, "GET", agg.url+proxy, "", ""); resp.StatusCode != 401 {
+		t.Errorf("proxy without token: %d", resp.StatusCode)
+	}
+	if f := agg.feed(proxy, session.Token); len(f.Entries) != 1 || f.Entries[0].Content.Body != "via the proxy" {
+		t.Errorf("proxied feed = %v", contents(f))
+	}
+	// Not Atom: the profile page is HTML.
+	resp, body := request(t, "GET", agg.url+"/api/feed?url="+url.QueryEscape(carol.url+"/"), session.Token, "")
+	if resp.StatusCode != 502 {
+		t.Errorf("proxying HTML: %d %s", resp.StatusCode, body)
+	}
+	resp, _ = request(t, "GET", agg.url+"/api/feed?url=file:///etc/passwd", session.Token, "")
+	if resp.StatusCode != 400 {
+		t.Errorf("proxying a file URL: %d", resp.StatusCode)
 	}
 }
 
