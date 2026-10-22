@@ -15,8 +15,15 @@ import (
 // makes rendering that HTML as is safe enough for a plain page.
 const pageCSP = "default-src 'none'; img-src * data:; style-src 'unsafe-inline'; sandbox"
 
-type postPage struct {
+type threadPage struct {
 	Aggregator string
+	Title      string
+	ThreadURL  string
+	Posts      []postView
+}
+
+type postView struct {
+	URL        string // this aggregator's page for the post
 	AuthorName string
 	AuthorURI  string
 	Verified   bool
@@ -27,16 +34,17 @@ type postPage struct {
 	Text       string
 	Published  string
 	Via        string
-	InReplyTo  string
+	Depth      int  // reply depth in the thread, for indentation
+	Current    bool // the post the page is about
 }
 
-func (s *Server) postPage(e *Entry, ae *atom.Entry) postPage {
-	p := postPage{
-		Aggregator: s.cfg.Aggregator.Name,
-		Verified:   e.Verified,
-		Title:      ae.Title,
-		Published:  ae.Published,
-		Via:        linkHref(ae.Links, "via"),
+func (s *Server) postView(e *Entry, ae *atom.Entry) postView {
+	p := postView{
+		URL:       s.postURL(e.N),
+		Verified:  e.Verified,
+		Title:     ae.Title,
+		Published: ae.Published,
+		Via:       linkHref(ae.Links, "via"),
 	}
 	if ae.Author != nil {
 		p.AuthorName, p.AuthorURI = ae.Author.Name, ae.Author.URI
@@ -50,9 +58,6 @@ func (s *Server) postPage(e *Entry, ae *atom.Entry) postPage {
 		} else {
 			p.Text = ae.Content.Body
 		}
-	}
-	if ae.InReplyTo != nil {
-		p.InReplyTo = ae.InReplyTo.Href
 	}
 	return p
 }
@@ -79,6 +84,8 @@ body { font: 16px/1.5 system-ui, sans-serif; max-width: 40rem; margin: 2rem auto
 @media (prefers-color-scheme: dark) { body { color: #ddd; background: #161616; } a { color: #8ab4f8; } }
 .meta { color: #888; font-size: 0.9em; }
 .text { white-space: pre-wrap; }
+article { border-left: 2px solid #8884; padding-left: 0.75rem; margin: 1rem 0; }
+article.current { border-left-color: #8ab4f8; }
 </style>
 </head>
 <body>
@@ -95,16 +102,18 @@ var homeTemplate = template.Must(template.Must(template.New("base").Parse(baseHT
 {{end}}`))
 
 var postTemplate = template.Must(template.Must(template.New("base").Parse(baseHTML)).Parse(`
-{{define "title"}}{{if .Title}}{{.Title}}{{else}}{{.AuthorName}}{{end}} · {{.Aggregator}}{{end}}
+{{define "title"}}{{.Title}} · {{.Aggregator}}{{end}}
 {{define "body"}}
-<p class="meta">
-  {{if .Verified}}<a href="{{.AuthorURI}}">{{.AuthorName}}</a> ✓
-  {{else}}{{.AuthorName}} · unverified · from {{.From}}{{end}}
-</p>
-<article>
-  {{if .InReplyTo}}<p class="meta">↳ in reply to <a href="{{.InReplyTo}}">{{.InReplyTo}}</a></p>{{end}}
+<p class="meta">{{.Aggregator}} · <a href="{{.ThreadURL}}">thread (Atom)</a></p>
+{{range .Posts}}
+<article{{if .Current}} class="current"{{end}} style="margin-left: {{.Depth}}rem">
+  <p class="meta">
+    {{if .Verified}}<a href="{{.AuthorURI}}">{{.AuthorName}}</a> ✓
+    {{else}}{{.AuthorName}} · unverified · from {{.From}}{{end}}
+  </p>
   {{if .Title}}<h2>{{.Title}}</h2>{{end}}
   {{if .IsHTML}}<div>{{.HTML}}</div>{{else}}<p class="text">{{.Text}}</p>{{end}}
-  <p class="meta">{{.Published}}{{if .Via}} · <a href="{{.Via}}">original</a>{{end}}</p>
+  <p class="meta"><a href="{{.URL}}">{{.Published}}</a>{{if .Via}} · <a href="{{.Via}}">original</a>{{end}}</p>
 </article>
+{{end}}
 {{end}}`))

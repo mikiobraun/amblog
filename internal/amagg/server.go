@@ -50,6 +50,7 @@ func NewServer(cfg *Config, store *Store) (*Server, error) {
 	mux.HandleFunc("GET /timeline.atom", s.handleIslandTimeline)
 	mux.HandleFunc("GET /timeline/{file}", s.handleUserTimeline)
 	mux.HandleFunc("GET /posts/{n}", s.handlePost)
+	mux.HandleFunc("GET /posts/{n}/thread.atom", s.handleThread)
 	mux.HandleFunc("POST /api/login", s.handleLogin)
 	mux.HandleFunc("POST /api/login/verify", s.handleLoginVerify)
 	mux.HandleFunc("POST /api/follow", s.requireUser(s.handleFollow))

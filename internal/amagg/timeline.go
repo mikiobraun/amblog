@@ -94,6 +94,11 @@ func (s *Server) serveTimeline(w http.ResponseWriter, r *http.Request, userID in
 		f.Entries = append(f.Entries, ae)
 		f.Updated = max(f.Updated, e.Updated)
 	}
+	s.writeAtom(w, r, f)
+}
+
+// writeAtom writes a feed with an ETag, answering If-None-Match with 304.
+func (s *Server) writeAtom(w http.ResponseWriter, r *http.Request, f *atom.Feed) {
 	body, err := atom.MarshalFeed(f)
 	if err != nil {
 		web.ServerError(w, err)
@@ -150,31 +155,41 @@ func (s *Server) reserve(e *Entry, feeds map[int64]*Feed) (*atom.Entry, error) {
 	return ae, nil
 }
 
-// handlePost serves one entry: Atom if asked for, HTML otherwise.
-func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
-	if !s.checkPublic(w, r) {
-		return
-	}
+func (s *Server) entryFromPath(w http.ResponseWriter, r *http.Request) (*Entry, bool) {
 	n, err := strconv.ParseInt(r.PathValue("n"), 10, 64)
 	if err != nil {
 		http.NotFound(w, r)
-		return
+		return nil, false
 	}
 	e, err := s.store.EntryByN(n)
 	if errors.Is(err, ErrNotFound) {
 		http.NotFound(w, r)
-		return
+		return nil, false
 	}
 	if err != nil {
 		web.ServerError(w, err)
+		return nil, false
+	}
+	return e, true
+}
+
+// handlePost serves one entry: Atom if asked for, otherwise an HTML page
+// showing it within its thread.
+func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
+	if !s.checkPublic(w, r) {
 		return
 	}
-	ae, err := s.reserve(e, map[int64]*Feed{})
-	if err != nil {
-		web.ServerError(w, err)
+	e, ok := s.entryFromPath(w, r)
+	if !ok {
 		return
 	}
+	feeds := map[int64]*Feed{}
 	if strings.Contains(r.Header.Get("Accept"), atom.MediaType) {
+		ae, err := s.reserve(e, feeds)
+		if err != nil {
+			web.ServerError(w, err)
+			return
+		}
 		body, err := atom.MarshalEntry(ae)
 		if err != nil {
 			web.ServerError(w, err)
@@ -184,7 +199,29 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 		w.Write(body)
 		return
 	}
-	s.renderHTML(w, postTemplate, s.postPage(e, ae))
+	items, err := s.thread(e)
+	if err != nil {
+		web.ServerError(w, err)
+		return
+	}
+	page := threadPage{Aggregator: s.cfg.Aggregator.Name, ThreadURL: s.postURL(e.N) + "/thread.atom"}
+	for _, it := range items {
+		ae, err := s.reserve(it.entry, feeds)
+		if err != nil {
+			web.ServerError(w, err)
+			return
+		}
+		p := s.postView(it.entry, ae)
+		p.Depth, p.Current = min(it.depth, 8), it.entry.N == e.N
+		if p.Current {
+			page.Title = p.AuthorName
+			if p.Title != "" {
+				page.Title = p.Title
+			}
+		}
+		page.Posts = append(page.Posts, p)
+	}
+	s.renderHTML(w, postTemplate, page)
 }
 
 func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {

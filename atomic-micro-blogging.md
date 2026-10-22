@@ -699,7 +699,7 @@ Single post view with thread context. HTML or Atom based on Accept header.
 
 #### `GET /posts/{id}/thread.atom`
 
-Full thread as Atom feed, including cross-aggregator replies received via WebMention.
+The whole conversation the post belongs to, as an Atom feed in conversation order: from the topmost ancestor the aggregator knows, depth-first through all replies (matched by `thr:in-reply-to ref`). Includes every entry the aggregator has stored, also fetched parents and cross-aggregator replies received via WebMention. The HTML post page shows the same thread.
 
 #### `POST /api/login` / `POST /api/login/verify`
 
@@ -1083,7 +1083,7 @@ Others:     bring their own feeds and frontends
 - [x] `amagg`: Follows, polling, ingest with verification and the replacement rule, SQLite storage, OPML export
 - [x] `amagg`: Island and member timelines, re-served entries (`alternate`, `via`, `atom:source`), post pages
 - [x] `am`: login, follow, unfollow, following, timeline
-- [ ] `amagg`: In-island threading, fetching missing parents
+- [x] `amagg`: In-island threading, fetching missing parents
 - [ ] `amagg`: Feed reader credentials (HTTP Basic), public/private island
 - [ ] `amagg`: Feed proxy
 - [ ] `amfront`: Aggregator login, timeline selection, thread view, feed reader passwords

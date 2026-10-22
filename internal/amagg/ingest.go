@@ -17,6 +17,7 @@ type origin struct {
 	fetchedFrom string
 	feed        *Feed
 	feedDoc     *atom.Feed // for the author fallback; may be nil
+	depth       int        // missing parents fetched so far to get here
 }
 
 // ingest stores an entry the way every ingest path does (see the spec,
@@ -65,7 +66,15 @@ func (s *Server) ingest(e *atom.Entry, o origin) (changed bool, err error) {
 
 	stored, err := s.store.EntryByID(e.ID)
 	if err == ErrNotFound {
-		return true, s.store.InsertEntry(in)
+		if err := s.store.InsertEntry(in); err != nil {
+			return false, err
+		}
+		// A new reply whose parent we don't know: fetch the parent once, so
+		// the thread has its context.
+		if e.InReplyTo != nil && e.InReplyTo.Ref != "" {
+			s.fetchParent(e.InReplyTo.Ref, e.InReplyTo.Href, o.depth+1)
+		}
+		return true, nil
 	}
 	if err != nil {
 		return false, err

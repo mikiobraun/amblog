@@ -359,6 +359,26 @@ func (s *Store) ReplaceEntry(e *Entry) error {
 	return err
 }
 
+// Replies returns the direct replies to the entry with the given Atom id,
+// oldest first.
+func (s *Store) Replies(id string) ([]*Entry, error) {
+	rows, err := s.db.Query(`SELECT `+entryColumns+` FROM entries WHERE in_reply_to_ref = ?
+		ORDER BY sort_time, n`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var entries []*Entry
+	for rows.Next() {
+		e, err := scanEntry(rows)
+		if err != nil {
+			return nil, err
+		}
+		entries = append(entries, e)
+	}
+	return entries, rows.Err()
+}
+
 // Timeline returns up to limit entries, newest first by sort_time, from the
 // island (all members' feeds) plus, if userID != 0, that user's follows.
 // next is the cursor for the following page, or nil.

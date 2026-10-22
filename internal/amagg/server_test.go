@@ -424,6 +424,80 @@ func TestPlainFeed(t *testing.T) {
 	}
 }
 
+// postID returns the Atom id of a post on a feed server, given its URL.
+func postID(t *testing.T, postURL string) string {
+	t.Helper()
+	req, _ := http.NewRequest("GET", postURL, nil)
+	req.Header.Set("Accept", atom.MediaType)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(resp.Body)
+	f, err := atom.Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return f.Entries[0].ID
+}
+
+func reply(t *testing.T, f *feedEnv, parentURL, text string) string {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{
+		"content":     text,
+		"in_reply_to": map[string]string{"ref": postID(t, parentURL), "href": parentURL},
+	})
+	return f.post(t, string(body))
+}
+
+func TestThreads(t *testing.T) {
+	agg := startAgg(t, nil)
+	alice, bob, dave := startFeed(t, "Alice"), startFeed(t, "Bob"), startFeed(t, "Dave")
+	agg.login(alice, agg.invite())
+	agg.login(bob, agg.invite())
+
+	root := alice.post(t, `{"content":"root"}`)
+	r1 := reply(t, bob, root, "bob replies")
+	reply(t, alice, r1, "alice answers bob")
+	// Dave is unknown to the island; Bob replies to him, so Dave's post is
+	// fetched as the missing parent.
+	davePost := dave.post(t, `{"content":"dave's post"}`)
+	reply(t, bob, davePost, "bob replies to dave")
+	agg.poll()
+
+	island := agg.feed("/timeline.atom", "")
+	var rootAlt string
+	for _, e := range island.Entries {
+		if e.Content.Body == "root" {
+			rootAlt = e.LinkHref("alternate")
+		}
+		if e.Content.Body == "dave's post" {
+			t.Error("a fetched parent must not appear in timelines")
+		}
+	}
+	thread := agg.feed(strings.TrimPrefix(rootAlt, agg.url)+"/thread.atom", "")
+	if got := strings.Join(contents(thread), " / "); got != "root / bob replies / alice answers bob" {
+		t.Errorf("thread = %s", got)
+	}
+
+	// The thread of the reply to Dave includes Dave's post, fetched.
+	for _, e := range island.Entries {
+		if e.Content.Body == "bob replies to dave" {
+			th := agg.feed(strings.TrimPrefix(e.LinkHref("alternate"), agg.url)+"/thread.atom", "")
+			if got := strings.Join(contents(th), " / "); got != "dave's post / bob replies to dave" {
+				t.Errorf("dave thread = %s", got)
+			}
+		}
+	}
+
+	// The HTML page shows the whole thread.
+	resp, body := request(t, "GET", rootAlt, "", "")
+	if resp.StatusCode != 200 || !strings.Contains(body, "alice answers bob") {
+		t.Errorf("post page: %d %s", resp.StatusCode, body)
+	}
+}
+
 func TestPrivateIsland(t *testing.T) {
 	agg := startAgg(t, func(c *Config) { c.Aggregator.Public = false })
 	alice := startFeed(t, "Alice")
