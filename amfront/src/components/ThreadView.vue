@@ -4,12 +4,15 @@ import type { Entry } from '../lib/atom'
 import { fetchFeed } from '../lib/agg'
 import { toItem, verifyItems, type Item } from '../lib/items'
 import { threadDepths } from '../lib/thread'
+import ComposeBox from './ComposeBox.vue'
 import EntryCard from './EntryCard.vue'
 
 const props = defineProps<{ url: string }>()
-const emit = defineEmits<{ reply: [entry: Entry]; close: [] }>()
+const emit = defineEmits<{ close: [] }>()
 
 const items = ref<Item[]>([])
+/** The entry being replied to; the reply box opens under it. */
+const replyTo = ref<Entry | null>(null)
 const loading = ref(false)
 const error = ref('')
 
@@ -30,7 +33,11 @@ async function reload() {
   }
 }
 
-defineExpose({ reload })
+function posted() {
+  replyTo.value = null
+  reload()
+}
+
 watch(() => props.url, reload)
 onMounted(reload)
 </script>
@@ -47,7 +54,13 @@ onMounted(reload)
       :entry="item.entry"
       :verified="item.verified"
       :own-seq="null"
-      @reply="emit('reply', item.entry)"
+      @reply="replyTo = item.entry"
+    />
+    <ComposeBox
+      v-if="replyTo?.id === item.entry.id"
+      :reply-to="replyTo"
+      @posted="posted"
+      @cancel-reply="replyTo = null"
     />
   </div>
 </template>

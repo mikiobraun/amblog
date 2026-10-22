@@ -138,6 +138,12 @@ textarea {
   margin-bottom: 0.75rem;
 }
 
+/* Reply box under the post it answers. */
+.compose.reply {
+  margin: -0.5rem 0 0.75rem 1.5rem;
+  border-color: var(--accent);
+}
+
 .compose-footer {
   display: flex;
   justify-content: flex-end;

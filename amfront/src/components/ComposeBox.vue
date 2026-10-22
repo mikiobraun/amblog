@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { linkHref, type Entry } from '../lib/atom'
 import { createEntry } from '../lib/api'
 
@@ -13,12 +13,10 @@ const textarea = ref<HTMLTextAreaElement | null>(null)
 
 const replyHref = computed(() => (props.replyTo ? linkHref(props.replyTo.links, 'alternate') : ''))
 
-watch(
-  () => props.replyTo,
-  (r) => {
-    if (r) textarea.value?.focus()
-  },
-)
+// A reply box opens under the post it answers, ready to type.
+onMounted(() => {
+  if (props.replyTo) textarea.value?.focus()
+})
 
 async function submit() {
   if (!text.value.trim() || busy.value) return
@@ -41,7 +39,7 @@ async function submit() {
 </script>
 
 <template>
-  <form class="compose" @submit.prevent="submit">
+  <form :class="['compose', { reply: replyTo }]" @submit.prevent="submit">
     <p v-if="replyTo" class="replying">
       ↳ Replying to <a :href="replyHref" target="_blank" rel="noopener">{{ replyTo.author?.name ?? replyTo.id }}</a>
       <button type="button" class="link" @click="emit('cancelReply')">cancel</button>
@@ -53,6 +51,7 @@ async function submit() {
       :placeholder="replyTo ? 'Write a reply…' : 'What\'s happening?'"
       @keydown.enter.ctrl.prevent="submit"
       @keydown.enter.meta.prevent="submit"
+      @keydown.esc="replyTo && emit('cancelReply')"
     />
     <div class="compose-footer">
       <span v-if="error" class="error">{{ error }}</span>

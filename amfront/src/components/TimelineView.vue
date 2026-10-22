@@ -15,8 +15,8 @@ const title = ref('')
 const next = ref('')
 const loading = ref(false)
 const error = ref('')
+/** The entry being replied to; the reply box opens under it. */
 const replyTo = ref<Entry | null>(null)
-const threadView = ref<InstanceType<typeof ThreadView> | null>(null)
 
 async function load(url: string, append: boolean) {
   loading.value = true
@@ -46,10 +46,11 @@ function reload() {
   load(url, false)
 }
 
+// A new post or reply shows up in the timeline once the aggregator has polled
+// it; our own feed shows it right away.
 function posted() {
   replyTo.value = null
-  if (route.thread) threadView.value?.reload()
-  else reload()
+  if (!route.thread) reload()
 }
 
 async function remove(item: Item) {
@@ -68,14 +69,8 @@ onMounted(reload)
 </script>
 
 <template>
-  <ComposeBox :reply-to="replyTo" @posted="posted" @cancel-reply="replyTo = null" />
-  <ThreadView
-    v-if="route.thread"
-    ref="threadView"
-    :url="route.thread"
-    @reply="replyTo = $event"
-    @close="go('timeline')"
-  />
+  <ComposeBox :reply-to="null" @posted="posted" />
+  <ThreadView v-if="route.thread" :url="route.thread" @close="go('timeline')" />
   <template v-else>
     <div class="timeline-header">
       <h2>{{ title || 'Timeline' }}</h2>
@@ -88,17 +83,23 @@ onMounted(reload)
       <button class="link" :disabled="loading" @click="reload">Refresh</button>
     </div>
     <p v-if="error" class="error">{{ error }}</p>
-    <EntryCard
-      v-for="item in items"
-      :key="item.entry.id"
-      :entry="item.entry"
-      :verified="item.verified"
-      :own-seq="item.ownSeq"
-      :thread-url="item.threadUrl"
-      @reply="replyTo = item.entry"
-      @thread="go('timeline', item.threadUrl)"
-      @delete="remove(item)"
-    />
+    <template v-for="item in items" :key="item.entry.id">
+      <EntryCard
+        :entry="item.entry"
+        :verified="item.verified"
+        :own-seq="item.ownSeq"
+        :thread-url="item.threadUrl"
+        @reply="replyTo = item.entry"
+        @thread="go('timeline', item.threadUrl)"
+        @delete="remove(item)"
+      />
+      <ComposeBox
+        v-if="replyTo?.id === item.entry.id"
+        :reply-to="replyTo"
+        @posted="posted"
+        @cancel-reply="replyTo = null"
+      />
+    </template>
     <p v-if="!loading && !error && items.length === 0" class="muted">Nothing here yet.</p>
     <button v-if="next" class="more" :disabled="loading" @click="load(next, true)">
       {{ loading ? 'Loading…' : 'Load more' }}
