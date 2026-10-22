@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"atomicmicro.blog/internal/web"
+	"atomicmicro.blog/internal/webmention"
 )
 
 const ConfigFile = "amagg.toml"
@@ -37,7 +38,8 @@ func Init(dir string, opts InitOptions) (configPath string, err error) {
 			MinInterval:     Duration{time.Minute},
 			MaxInterval:     Duration{time.Hour},
 		},
-		Storage: StorageConfig{Path: "amagg.db"},
+		Storage:    StorageConfig{Path: "amagg.db"},
+		WebMention: WebMentionConfig{PerHostPerHour: webmention.DefaultPerHostPerHour, BlockHosts: []string{}},
 	}
 	if err := cfg.validate(); err != nil {
 		return "", err

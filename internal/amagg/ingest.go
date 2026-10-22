@@ -18,6 +18,7 @@ type origin struct {
 	feed        *Feed
 	feedDoc     *atom.Feed // for the author fallback; may be nil
 	depth       int        // missing parents fetched so far to get here
+	forward     bool       // a reply from here is forwarded to its source (members' feeds, WebMentions)
 }
 
 // ingest stores an entry the way every ingest path does (see the spec,
@@ -66,15 +67,22 @@ func (s *Server) ingest(e *atom.Entry, o origin) (changed bool, err error) {
 
 	stored, err := s.store.EntryByID(e.ID)
 	if err == ErrNotFound {
-		if err := s.store.InsertEntry(in); err != nil {
+		inserted, err := s.store.InsertEntry(in)
+		if err != nil {
 			return false, err
 		}
-		// A new reply whose parent we don't know: fetch the parent once, so
-		// the thread has its context.
-		if e.InReplyTo != nil && e.InReplyTo.Ref != "" {
-			s.fetchParent(e.InReplyTo.Ref, e.InReplyTo.Href, o.depth+1)
+		if inserted {
+			// A new reply whose parent we don't know: fetch the parent once,
+			// so the thread has its context.
+			if e.InReplyTo != nil && e.InReplyTo.Ref != "" {
+				s.fetchParent(e.InReplyTo.Ref, e.InReplyTo.Href, o.depth+1)
+			}
+			s.forwardReply(e, o)
+			return true, nil
 		}
-		return true, nil
+		// Another ingest path (a push, a WebMention) stored it meanwhile:
+		// treat this copy as a newer version of that one.
+		stored, err = s.store.EntryByID(e.ID)
 	}
 	if err != nil {
 		return false, err
@@ -94,7 +102,13 @@ func (s *Server) ingest(e *atom.Entry, o origin) (changed bool, err error) {
 	if !in.FeedID.Valid {
 		in.FeedID = stored.FeedID // e.g. a parent fetched earlier keeps its place in timelines
 	}
-	return true, s.store.ReplaceEntry(in)
+	if err := s.store.ReplaceEntry(in); err != nil {
+		return false, err
+	}
+	if in.XML != stored.XML {
+		s.forwardReply(e, o) // an edit or delete
+	}
+	return true, nil
 }
 
 // mayReplace is the replacement rule: a verified version replaces an entry of

@@ -8,6 +8,7 @@ import (
 
 	"atomicmicro.blog/internal/sign"
 	"atomicmicro.blog/internal/web"
+	"atomicmicro.blog/internal/webmention"
 )
 
 const ConfigFile = "amfeed.toml"
@@ -41,7 +42,8 @@ func Init(dir string, opts InitOptions) (configPath, adminToken string, err erro
 			KeyID:          keyID,
 			KeyCreated:     now,
 		},
-		Storage: StorageConfig{Path: "amfeed.db"},
+		Storage:    StorageConfig{Path: "amfeed.db"},
+		WebMention: WebMentionConfig{PerHostPerHour: webmention.DefaultPerHostPerHour, BlockHosts: []string{}},
 	}
 	if err := cfg.validate(); err != nil {
 		return "", "", err

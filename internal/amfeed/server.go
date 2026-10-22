@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -20,6 +21,8 @@ import (
 	"atomicmicro.blog/internal/paging"
 	"atomicmicro.blog/internal/sign"
 	"atomicmicro.blog/internal/web"
+	"atomicmicro.blog/internal/webmention"
+	"atomicmicro.blog/internal/websub"
 )
 
 const (
@@ -43,6 +46,9 @@ type Server struct {
 	feedPageSize int
 	now          func() time.Time
 	handler      http.Handler
+	client       *http.Client // for WebSub pushes and WebMentions
+	limiter      *webmention.Limiter
+	bg           sync.WaitGroup // background deliveries, see Wait
 
 	mu         sync.Mutex
 	challenges map[string]challenge // login challenges by token, kept in memory
@@ -70,12 +76,17 @@ func NewServer(cfg *Config, store *Store, key ed25519.PrivateKey) (*Server, erro
 		idPath += "/"
 	}
 	s := &Server{cfg: cfg, store: store, key: key, idPrefix: "tag:" + u.Hostname() + ",", idPath: idPath, keysURL: keysURL,
-		feedPageSize: feedPageSize, now: time.Now, challenges: map[string]challenge{}}
+		feedPageSize: feedPageSize, now: time.Now, challenges: map[string]challenge{},
+		client:  &http.Client{Timeout: 20 * time.Second},
+		limiter: webmention.NewLimiter(cfg.WebMention.PerHostPerHour)}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.handleProfile)
 	mux.HandleFunc("GET /feed.atom", s.handleFeed)
 	mux.HandleFunc("GET /posts/{seq}", s.handlePost)
+	mux.HandleFunc("GET /posts/{seq}/replies.atom", s.handleReplies)
+	mux.HandleFunc("POST "+websub.HubPath, s.handleHub)
+	mux.HandleFunc("POST /webmention", s.handleWebMention)
 	mux.HandleFunc("GET /"+sign.KeysPath, s.handleKeys)
 	mux.HandleFunc("GET /"+sign.ChallengePath+"/{token}", s.handleGetChallenge)
 	mux.HandleFunc("POST /api/entries", s.requireToken(false, s.handleCreateEntry))
@@ -88,6 +99,18 @@ func NewServer(cfg *Config, store *Store, key ed25519.PrivateKey) (*Server, erro
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.handler.ServeHTTP(w, r) }
+
+// Wait blocks until background work (WebSub pushes, WebMentions sent and
+// received) is done.
+func (s *Server) Wait() { s.bg.Wait() }
+
+func (s *Server) background(f func()) {
+	s.bg.Add(1)
+	go func() {
+		defer s.bg.Done()
+		f()
+	}()
+}
 
 // --- Atom ---
 
@@ -146,15 +169,25 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	entries, next, err := s.store.ListEntries(before, s.feedPageSize)
+	body, err := s.feedPage(before)
 	if err != nil {
 		s.serverError(w, err)
 		return
 	}
+	writeAtom(w, r, body)
+}
+
+func (s *Server) hubURL() string { return s.cfg.Feed.BaseURL + websub.HubPath }
+
+// feedPage renders one page of the feed; before = nil is the first page.
+func (s *Server) feedPage(before *paging.Cursor) ([]byte, error) {
+	entries, next, err := s.store.ListEntries(before, s.feedPageSize)
+	if err != nil {
+		return nil, err
+	}
 	updated, err := s.store.LatestUpdated()
 	if err != nil {
-		s.serverError(w, err)
-		return
+		return nil, err
 	}
 	if updated == "" {
 		updated = emptyFeedUpdated
@@ -168,6 +201,7 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 			{Rel: "self", Href: s.feedPageURL(before), Type: atom.MediaType},
 			{Rel: "first", Href: s.feedURL(), Type: atom.MediaType},
 			{Rel: "alternate", Href: s.cfg.Feed.BaseURL + "/", Type: "text/html"},
+			{Rel: "hub", Href: s.hubURL()},
 		},
 	}
 	if next != nil {
@@ -176,11 +210,11 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 	for _, e := range entries {
 		f.Entries = append(f.Entries, s.atomEntry(e))
 	}
-	body, err := atom.MarshalFeed(f)
-	if err != nil {
-		s.serverError(w, err)
-		return
-	}
+	return atom.MarshalFeed(f)
+}
+
+// writeAtom writes an Atom feed with an ETag, answering If-None-Match with 304.
+func writeAtom(w http.ResponseWriter, r *http.Request, body []byte) {
 	sum := sha256.Sum256(body)
 	etag := `"` + hex.EncodeToString(sum[:16]) + `"`
 	w.Header().Set("ETag", etag)
@@ -197,6 +231,7 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	w.Header().Set("Link", "<"+s.webmentionURL()+`>; rel="webmention"`)
 	if strings.Contains(r.Header.Get("Accept"), atom.MediaType) {
 		body, err := atom.MarshalEntry(s.atomEntry(e))
 		if err != nil {
@@ -320,6 +355,21 @@ func (s *Server) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Location", s.postURL(e.Seq))
 	writeJSON(w, http.StatusCreated, s.entryResponse(e))
+	s.announce(e)
+}
+
+// announce tells others about a new or changed entry: WebSub subscribers get
+// the feed, and the post a reply answers gets a WebMention.
+func (s *Server) announce(e *Entry) {
+	s.background(s.publish)
+	if e.InReplyToHref != "" {
+		source, target := s.postURL(e.Seq), e.InReplyToHref
+		s.background(func() {
+			if err := webmention.Deliver(s.client, source, target); err != nil {
+				log.Printf("webmention %s -> %s: %v", source, target, err)
+			}
+		})
+	}
 }
 
 func (s *Server) handleListEntries(w http.ResponseWriter, r *http.Request) {
@@ -375,6 +425,7 @@ func (s *Server) handleDeleteEntry(w http.ResponseWriter, r *http.Request) {
 			s.serverError(w, err)
 			return
 		}
+		s.announce(e)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

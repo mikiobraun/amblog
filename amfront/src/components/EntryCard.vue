@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import DOMPurify from 'dompurify'
 import { linkHref, type Entry } from '../lib/atom'
+import { sanitize } from '../lib/sanitize'
 import type { VerifyStatus } from '../lib/sign'
 
 const props = defineProps<{
@@ -30,11 +30,8 @@ const from = computed(() => {
 // amfeed tombstones have empty content and title (the API rejects empty posts).
 const deleted = computed(() => !props.entry.content?.body && !props.entry.title && !props.entry.verb)
 
-// HTML content comes from arbitrary feeds and is rendered in our origin, where
-// the token lives, so it must be sanitized.
-const html = computed(() =>
-  props.entry.content?.type === 'html' ? DOMPurify.sanitize(props.entry.content.body) : '',
-)
+// Feed HTML is untrusted and rendered in our origin: always sanitize.
+const html = computed(() => (props.entry.content?.type === 'html' ? sanitize(props.entry.content.body) : ''))
 
 const published = computed(() => {
   const d = new Date(props.entry.published || props.entry.updated)

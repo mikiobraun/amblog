@@ -10,13 +10,23 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+
+	"atomicmicro.blog/internal/webmention"
 )
 
 type Config struct {
-	Server  ServerConfig  `toml:"server"`
-	Feed    FeedConfig    `toml:"feed"`
-	Signing SigningConfig `toml:"signing"`
-	Storage StorageConfig `toml:"storage"`
+	Server     ServerConfig     `toml:"server"`
+	Feed       FeedConfig       `toml:"feed"`
+	Signing    SigningConfig    `toml:"signing"`
+	Storage    StorageConfig    `toml:"storage"`
+	WebMention WebMentionConfig `toml:"webmention"`
+}
+
+// WebMentionConfig is spam control for incoming WebMentions. The section is
+// optional; without it, the defaults apply.
+type WebMentionConfig struct {
+	PerHostPerHour int      `toml:"per_host_per_hour"` // then 429
+	BlockHosts     []string `toml:"block_hosts"`       // hosts (and their subdomains) whose mentions are rejected
 }
 
 type ServerConfig struct {
@@ -50,6 +60,9 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if undecoded := md.Undecoded(); len(undecoded) > 0 {
 		return nil, fmt.Errorf("%s: unknown keys %v", path, undecoded)
+	}
+	if !md.IsDefined("webmention", "per_host_per_hour") {
+		c.WebMention.PerHostPerHour = webmention.DefaultPerHostPerHour
 	}
 	if err := c.validate(); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
@@ -92,6 +105,9 @@ func (c *Config) validate() error {
 	}
 	if err := checkAbsURL(c.Feed.AuthorURI); err != nil {
 		errs = append(errs, fmt.Errorf("feed.author_uri: %w", err))
+	}
+	if c.WebMention.PerHostPerHour < 1 {
+		errs = append(errs, errors.New("webmention.per_host_per_hour must be at least 1"))
 	}
 	return errors.Join(errs...)
 }

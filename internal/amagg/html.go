@@ -5,6 +5,7 @@ import (
 	"html/template"
 	"net/http"
 	"net/url"
+	"regexp"
 
 	"atomicmicro.blog/internal/atom"
 	"atomicmicro.blog/internal/web"
@@ -19,6 +20,7 @@ type threadPage struct {
 	Aggregator string
 	Title      string
 	ThreadURL  string
+	WebMention string // endpoint, advertised in the page head
 	Posts      []postView
 }
 
@@ -54,12 +56,25 @@ func (s *Server) postView(e *Entry, ae *atom.Entry) postView {
 	}
 	if ae.Content != nil {
 		if ae.Content.Type == "html" {
-			p.IsHTML, p.HTML = true, template.HTML(ae.Content.Body)
+			body := ae.Content.Body
+			if ae.InReplyTo != nil {
+				body = nofollow(body)
+			}
+			p.IsHTML, p.HTML = true, template.HTML(body)
 		} else {
 			p.Text = ae.Content.Body
 		}
 	}
 	return p
+}
+
+var anchorRe = regexp.MustCompile(`(?i)<a(\s|>)`)
+
+// nofollow marks every link in a reply as user content, so links in replies
+// carry no search ranking (see the spec, "Spam Control"). Our rel comes first,
+// and browsers use the first of duplicate attributes.
+func nofollow(html string) string {
+	return anchorRe.ReplaceAllString(html, `<a rel="nofollow ugc"$1`)
 }
 
 func (s *Server) renderHTML(w http.ResponseWriter, t *template.Template, data any) {
@@ -79,6 +94,7 @@ const baseHTML = `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{block "title" .}}{{end}}</title>
+{{block "head" .}}{{end}}
 <style>
 body { font: 16px/1.5 system-ui, sans-serif; max-width: 40rem; margin: 2rem auto; padding: 0 1rem; color: #222; background: #fff; }
 @media (prefers-color-scheme: dark) { body { color: #ddd; background: #161616; } a { color: #8ab4f8; } }
@@ -103,6 +119,7 @@ var homeTemplate = template.Must(template.Must(template.New("base").Parse(baseHT
 
 var postTemplate = template.Must(template.Must(template.New("base").Parse(baseHTML)).Parse(`
 {{define "title"}}{{.Title}} · {{.Aggregator}}{{end}}
+{{define "head"}}<link rel="webmention" href="{{.WebMention}}">{{end}}
 {{define "body"}}
 <p class="meta">{{.Aggregator}} · <a href="{{.ThreadURL}}">thread (Atom)</a></p>
 {{range .Posts}}

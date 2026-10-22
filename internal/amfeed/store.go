@@ -55,6 +55,22 @@ var schema = []string{
 		created TEXT NOT NULL,
 		expires TEXT
 	)`,
+	// WebSub subscribers of the feed (amfeed is its own hub).
+	`CREATE TABLE IF NOT EXISTS subscriptions (
+		callback TEXT PRIMARY KEY,
+		secret   TEXT NOT NULL,
+		expires  TEXT NOT NULL
+	)`,
+	// Received WebMentions: the entry found at source that replies to our
+	// post seq, as received (or made up for a plain HTML page).
+	`CREATE TABLE IF NOT EXISTS mentions (
+		source   TEXT NOT NULL,
+		seq      INTEGER NOT NULL,
+		updated  TEXT NOT NULL,
+		xml      TEXT NOT NULL,
+		received TEXT NOT NULL,
+		PRIMARY KEY (source, seq)
+	)`,
 }
 
 type Store struct {
@@ -193,6 +209,95 @@ func (s *Store) CreateToken(name, hash string, admin bool, expires *time.Time) e
 	_, err := s.db.Exec(`INSERT INTO tokens (hash, name, admin, created, expires) VALUES (?, ?, ?, ?, ?)`,
 		hash, name, admin, time.Now().UTC().Format(time.RFC3339), exp)
 	return err
+}
+
+// --- WebSub subscriptions ---
+
+type Subscription struct {
+	Callback string
+	Secret   string
+	Expires  string
+}
+
+func (s *Store) PutSubscription(sub Subscription) error {
+	_, err := s.db.Exec(`INSERT INTO subscriptions (callback, secret, expires) VALUES (?, ?, ?)
+		ON CONFLICT (callback) DO UPDATE SET secret = excluded.secret, expires = excluded.expires`,
+		sub.Callback, sub.Secret, sub.Expires)
+	return err
+}
+
+func (s *Store) DeleteSubscription(callback string) error {
+	_, err := s.db.Exec(`DELETE FROM subscriptions WHERE callback = ?`, callback)
+	return err
+}
+
+// Subscriptions returns the subscriptions that haven't expired at now, and
+// deletes the expired ones.
+func (s *Store) Subscriptions(now string) ([]Subscription, error) {
+	if _, err := s.db.Exec(`DELETE FROM subscriptions WHERE expires <= ?`, now); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.Query(`SELECT callback, secret, expires FROM subscriptions ORDER BY callback`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var subs []Subscription
+	for rows.Next() {
+		var sub Subscription
+		if err := rows.Scan(&sub.Callback, &sub.Secret, &sub.Expires); err != nil {
+			return nil, err
+		}
+		subs = append(subs, sub)
+	}
+	return subs, rows.Err()
+}
+
+func (s *Store) CountSubscriptions() (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM subscriptions`).Scan(&n)
+	return n, err
+}
+
+// --- received WebMentions ---
+
+type Mention struct {
+	Source   string
+	Seq      int64
+	Updated  string
+	XML      string
+	Received string
+}
+
+func (s *Store) PutMention(m Mention) error {
+	_, err := s.db.Exec(`INSERT INTO mentions (source, seq, updated, xml, received) VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT (source, seq) DO UPDATE SET updated = excluded.updated, xml = excluded.xml, received = excluded.received`,
+		m.Source, m.Seq, m.Updated, m.XML, m.Received)
+	return err
+}
+
+func (s *Store) DeleteMention(source string, seq int64) error {
+	_, err := s.db.Exec(`DELETE FROM mentions WHERE source = ? AND seq = ?`, source, seq)
+	return err
+}
+
+// Mentions returns the mentions of post seq, most recently updated first.
+func (s *Store) Mentions(seq int64) ([]Mention, error) {
+	rows, err := s.db.Query(`SELECT source, seq, updated, xml, received FROM mentions WHERE seq = ?
+		ORDER BY updated DESC, source`, seq)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ms []Mention
+	for rows.Next() {
+		var m Mention
+		if err := rows.Scan(&m.Source, &m.Seq, &m.Updated, &m.XML, &m.Received); err != nil {
+			return nil, err
+		}
+		ms = append(ms, m)
+	}
+	return ms, rows.Err()
 }
 
 // CheckToken looks up an unexpired token by hash and reports whether it is

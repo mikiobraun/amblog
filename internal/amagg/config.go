@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+
+	"atomicmicro.blog/internal/webmention"
 )
 
 type Config struct {
@@ -17,6 +19,14 @@ type Config struct {
 	Aggregator AggregatorConfig `toml:"aggregator"`
 	Polling    PollingConfig    `toml:"polling"`
 	Storage    StorageConfig    `toml:"storage"`
+	WebMention WebMentionConfig `toml:"webmention"`
+}
+
+// WebMentionConfig is spam control for incoming WebMentions. The section is
+// optional; without it, the defaults apply.
+type WebMentionConfig struct {
+	PerHostPerHour int      `toml:"per_host_per_hour"` // then 429
+	BlockHosts     []string `toml:"block_hosts"`       // hosts (and their subdomains) whose mentions are rejected
 }
 
 type ServerConfig struct {
@@ -68,6 +78,9 @@ func LoadConfig(path string) (*Config, error) {
 	if !md.IsDefined("aggregator", "public") {
 		return nil, fmt.Errorf("%s: aggregator.public is required", path)
 	}
+	if !md.IsDefined("webmention", "per_host_per_hour") {
+		c.WebMention.PerHostPerHour = webmention.DefaultPerHostPerHour
+	}
 	if err := c.validate(); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
@@ -114,6 +127,9 @@ func (c *Config) validate() error {
 	p := c.Polling
 	if p.MinInterval.Duration <= 0 || p.MinInterval.Duration > p.DefaultInterval.Duration || p.DefaultInterval.Duration > p.MaxInterval.Duration {
 		errs = append(errs, errors.New("polling: need 0 < min_interval <= default_interval <= max_interval"))
+	}
+	if c.WebMention.PerHostPerHour < 1 {
+		errs = append(errs, errors.New("webmention.per_host_per_hour must be at least 1"))
 	}
 	return errors.Join(errs...)
 }

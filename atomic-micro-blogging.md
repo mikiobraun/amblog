@@ -640,7 +640,7 @@ The aggregator ingests its members' feeds (pushed via WebSub, or polled), sees t
 
 #### Forwarding to the Source
 
-When the aggregator ingests a member's reply, it sends a WebMention to the parent post's `via` URL — the author's own post URL if the aggregator got the entry directly from the author's feed. This notifies the author's feed server (or blog) — even if the author is not on this aggregator.
+When the aggregator ingests a member's reply, it sends a WebMention to the parent post's `via` URL — the author's own post URL if the aggregator got the entry directly from the author's feed. This notifies the author's feed server (or blog) — even if the author is not on this aggregator. The `source` is the reply's own URL on the replier's feed server, not the aggregator's copy, so forwarding works from private islands too.
 
 The source is where islands meet. Its `replies.atom` collects replies forwarded from every island:
 
@@ -1126,17 +1126,18 @@ Others:     bring their own feeds and frontends
 
 ### Phase 3: Interactions
 
-- [ ] `amfeed` + `amagg`: WebMention endpoint (incoming), reply feeds
-- [ ] `amfeed`: Sending WebMentions for replies
-- [ ] `amagg`: WebMention forwarding to source
-- [ ] `amfeed` + `amagg`: Spam control (source check, `nofollow ugc`, per-host rate limit, host blocklist)
+- [x] `amfeed` + `amagg`: WebMention endpoint (incoming), reply feeds
+- [x] `amfeed`: Sending WebMentions for replies
+- [x] `amagg`: WebMention forwarding to source
+- [x] `amfeed` + `amagg`: Spam control (source check, `nofollow ugc`, per-host rate limit, host blocklist)
+- [ ] `amagg`: `GET /api/mentions/{entry-id}`
 - [ ] `amfront`: Like/repost actions
 - [ ] `amagg`: Islands consuming islands
 
 ### Phase 4: Real-Time
 
-- [ ] `amfeed`: Its own WebSub hub (subscriptions, intent verification, push on create/edit/delete)
-- [ ] `amagg`: WebSub subscriptions (subscribe, renew, ingest pushes, slow polling as fallback)
+- [x] `amfeed`: Its own WebSub hub (subscriptions, intent verification, push on create/edit/delete)
+- [x] `amagg`: WebSub subscriptions (subscribe, renew, ingest pushes, slow polling as fallback)
 - [ ] `amfront`: Live timeline updates (SSE or WebSocket from amagg)
 
 ### Phase 5: Polish

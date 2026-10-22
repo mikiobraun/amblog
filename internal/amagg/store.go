@@ -85,6 +85,17 @@ var schema = []string{
 	)`,
 	`CREATE INDEX IF NOT EXISTS entries_timeline ON entries (feed_id, sort_time, n)`,
 	`CREATE INDEX IF NOT EXISTS entries_thread ON entries (in_reply_to_ref)`,
+	// WebSub subscriptions, one per feed. state is "pending" until the hub has
+	// verified the intent, then "active" until expires.
+	`CREATE TABLE IF NOT EXISTS subscriptions (
+		feed_id   INTEGER PRIMARY KEY REFERENCES feeds (id),
+		hub       TEXT NOT NULL,
+		topic     TEXT NOT NULL,
+		secret    TEXT NOT NULL,
+		state     TEXT NOT NULL,
+		requested TEXT NOT NULL,
+		expires   TEXT NOT NULL DEFAULT ''
+	)`,
 }
 
 type Store struct {
@@ -185,6 +196,57 @@ func (s *Store) DueFeeds(t string, limit int) ([]*Feed, error) {
 		feeds = append(feeds, f)
 	}
 	return feeds, rows.Err()
+}
+
+// FeedWanted reports whether the feed is still polled: it belongs to a member
+// or someone follows it.
+func (s *Store) FeedWanted(feedID int64) (bool, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT (SELECT COUNT(*) FROM users WHERE feed_id = ?) + (SELECT COUNT(*) FROM follows WHERE feed_id = ?)`,
+		feedID, feedID).Scan(&n)
+	return n > 0, err
+}
+
+// IsMemberFeed reports whether the feed is a member's own feed.
+func (s *Store) IsMemberFeed(feedID int64) (bool, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM users WHERE feed_id = ?`, feedID).Scan(&n)
+	return n > 0, err
+}
+
+// --- WebSub subscriptions ---
+
+type Subscription struct {
+	FeedID    int64
+	Hub       string
+	Topic     string
+	Secret    string
+	State     string // "pending" or "active"
+	Requested string
+	Expires   string
+}
+
+func (s *Store) GetSubscription(feedID int64) (*Subscription, error) {
+	var sub Subscription
+	err := s.db.QueryRow(`SELECT feed_id, hub, topic, secret, state, requested, expires FROM subscriptions WHERE feed_id = ?`,
+		feedID).Scan(&sub.FeedID, &sub.Hub, &sub.Topic, &sub.Secret, &sub.State, &sub.Requested, &sub.Expires)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return &sub, err
+}
+
+func (s *Store) PutSubscription(sub *Subscription) error {
+	_, err := s.db.Exec(`INSERT INTO subscriptions (feed_id, hub, topic, secret, state, requested, expires)
+		VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (feed_id) DO UPDATE SET hub = excluded.hub, topic = excluded.topic,
+		secret = excluded.secret, state = excluded.state, requested = excluded.requested, expires = excluded.expires`,
+		sub.FeedID, sub.Hub, sub.Topic, sub.Secret, sub.State, sub.Requested, sub.Expires)
+	return err
+}
+
+func (s *Store) DeleteSubscription(feedID int64) error {
+	_, err := s.db.Exec(`DELETE FROM subscriptions WHERE feed_id = ?`, feedID)
+	return err
 }
 
 // --- users, tokens, invites ---
@@ -402,15 +464,22 @@ func (s *Store) EntryByN(n int64) (*Entry, error) {
 	return scanEntry(s.db.QueryRow(`SELECT `+entryColumns+` FROM entries WHERE n = ?`, n))
 }
 
-func (s *Store) InsertEntry(e *Entry) error {
+// InsertEntry stores a new entry and sets e.N. If an entry with that id
+// exists (another ingest path got there first), it stores nothing and
+// returns inserted = false.
+func (s *Store) InsertEntry(e *Entry) (inserted bool, err error) {
 	res, err := s.db.Exec(`INSERT INTO entries (id, author_uri, fetched_from, feed_id, in_reply_to_ref,
-		sort_time, updated, verified, xml, received) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		sort_time, updated, verified, xml, received) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (id) DO NOTHING`,
 		e.ID, e.AuthorURI, e.FetchedFrom, e.FeedID, e.InReplyToRef, e.SortTime, e.Updated, e.Verified, e.XML, e.Received)
 	if err != nil {
-		return err
+		return false, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return false, nil
 	}
 	e.N, err = res.LastInsertId()
-	return err
+	return err == nil, err
 }
 
 // ReplaceEntry overwrites a stored entry (by n) with a newer version.

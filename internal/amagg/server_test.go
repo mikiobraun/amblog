@@ -21,7 +21,11 @@ import (
 type feedEnv struct {
 	url   string // base URL; the author URI is url + "/"
 	admin string
+	srv   *amfeed.Server
 }
+
+// wait lets the feed server finish its WebSub pushes and WebMentions.
+func (f *feedEnv) wait() { f.srv.Wait() }
 
 func startFeed(t *testing.T, name string) *feedEnv {
 	t.Helper()
@@ -53,7 +57,7 @@ func startFeed(t *testing.T, name string) *feedEnv {
 	ts.Config.Handler = srv
 	ts.Start()
 	t.Cleanup(ts.Close)
-	return &feedEnv{url: baseURL, admin: admin}
+	return &feedEnv{url: baseURL, admin: admin, srv: srv}
 }
 
 // post publishes an entry and returns its post URL.

@@ -2,7 +2,7 @@
 <feed xmlns="http://www.w3.org/2005/Atom">
   <id>http://localhost:8198/feed.atom</id>
   <title>Fixture&#39;s Feed</title>
-  <updated>2026-10-22T17:02:46Z</updated>
+  <updated>2026-10-22T22:49:25Z</updated>
   <author>
     <name>Fixture</name>
     <uri>http://localhost:8198/</uri>
@@ -10,24 +10,25 @@
   <link rel="self" href="http://localhost:8198/feed.atom" type="application/atom+xml"></link>
   <link rel="first" href="http://localhost:8198/feed.atom" type="application/atom+xml"></link>
   <link rel="alternate" href="http://localhost:8198/" type="text/html"></link>
+  <link rel="hub" href="http://localhost:8198/websub"></link>
   <entry xmlns="http://www.w3.org/2005/Atom">
     <id>tag:localhost,2026-10:8198/post-5</id>
     <title></title>
-    <published>2026-10-22T17:02:46Z</published>
-    <updated>2026-10-22T17:02:46Z</updated>
+    <published>2026-10-22T22:49:25Z</published>
+    <updated>2026-10-22T22:49:25Z</updated>
     <author>
       <name>Fixture</name>
       <uri>http://localhost:8198/</uri>
     </author>
     <content type="text"></content>
     <link rel="alternate" href="http://localhost:8198/posts/5" type="text/html"></link>
-    <signature xmlns="https://atomicmicro.blog/ns/1.0" key-id="2026-10" algorithm="ed25519" value="y+cK0+qJBmvy0GCvrApc+jxdkXJE36rVGoRyubkpXJhfN6JD4lgIQhGZmXa4PJpM32VSof5QUtMfWQIFqPl/Aw=="></signature>
+    <signature xmlns="https://atomicmicro.blog/ns/1.0" key-id="2026-10" algorithm="ed25519" value="yr/ZAc1+anA5YFo7o99OseIHOUgWhQo4bgzzEIs8lKfXxnmCacvxOPk/lL/B2XH4SOCBaGtWxcegauQdIem7DA=="></signature>
   </entry>
   <entry xmlns="http://www.w3.org/2005/Atom">
     <id>tag:localhost,2026-10:8198/post-4</id>
     <title></title>
-    <published>2026-10-22T17:02:46Z</published>
-    <updated>2026-10-22T17:02:46Z</updated>
+    <published>2026-10-22T22:49:25Z</published>
+    <updated>2026-10-22T22:49:25Z</updated>
     <author>
       <name>Fixture</name>
       <uri>http://localhost:8198/</uri>
@@ -35,45 +36,45 @@
     <content type="text">a reply</content>
     <link rel="alternate" href="http://localhost:8198/posts/4" type="text/html"></link>
     <in-reply-to xmlns="http://purl.org/syndication/thread/1.0" ref="tag:localhost,2026-10:8198/post-1" href="http://localhost:8198/posts/1"></in-reply-to>
-    <signature xmlns="https://atomicmicro.blog/ns/1.0" key-id="2026-10" algorithm="ed25519" value="wT2cZLPDvhYzDS6JZ4KWOMkiG0Z5rKOPQpiwetoybOk6VnUCzW0Vu6fSiO4D+eMCMRg/5Et8G3o7Wl8zXNwHBA=="></signature>
+    <signature xmlns="https://atomicmicro.blog/ns/1.0" key-id="2026-10" algorithm="ed25519" value="Gk1PguUDVJYHiDGVENvc/e7M1Q+UxQW/9gUkxWLoJNFlhDgs2aJjvk1g6ttby3pqGIrcTkqOhLvIF7qhhC9EAQ=="></signature>
   </entry>
   <entry xmlns="http://www.w3.org/2005/Atom">
     <id>tag:localhost,2026-10:8198/post-3</id>
     <title>A long-form post</title>
-    <published>2026-10-22T17:02:46Z</published>
-    <updated>2026-10-22T17:02:46Z</updated>
+    <published>2026-10-22T22:49:25Z</published>
+    <updated>2026-10-22T22:49:25Z</updated>
     <author>
       <name>Fixture</name>
       <uri>http://localhost:8198/</uri>
     </author>
     <content type="html">&lt;p&gt;HTML &lt;em&gt;content&lt;/em&gt;&lt;/p&gt;</content>
     <link rel="alternate" href="http://localhost:8198/posts/3" type="text/html"></link>
-    <signature xmlns="https://atomicmicro.blog/ns/1.0" key-id="2026-10" algorithm="ed25519" value="YSjZQsCAIMqr6rwgFpgM5HKcS0Wmg0mxfUMtFwRqGuaCGLar46ZdZSaldaLWDEix13iA0qaHuPUW2AEPuosxAg=="></signature>
+    <signature xmlns="https://atomicmicro.blog/ns/1.0" key-id="2026-10" algorithm="ed25519" value="WxzFJgdiryHFYQx7YPZZT9dNEQvcv/2iZ5cevj94iomof0MpQyyaWwuM7QFM/KQwb0VrOyikF6gE74QQeGd7BA=="></signature>
   </entry>
   <entry xmlns="http://www.w3.org/2005/Atom">
     <id>tag:localhost,2026-10:8198/post-2</id>
     <title></title>
-    <published>2026-10-22T17:02:46Z</published>
-    <updated>2026-10-22T17:02:46Z</updated>
+    <published>2026-10-22T22:49:25Z</published>
+    <updated>2026-10-22T22:49:25Z</updated>
     <author>
       <name>Fixture</name>
       <uri>http://localhost:8198/</uri>
     </author>
     <content type="text">line one&#xD;&#xA;line two\with backslash&#xA;&#xA;  indented</content>
     <link rel="alternate" href="http://localhost:8198/posts/2" type="text/html"></link>
-    <signature xmlns="https://atomicmicro.blog/ns/1.0" key-id="2026-10" algorithm="ed25519" value="lPTFyRoE1Lrr7Du/wU9XMhbX2RaMlUU1ixEaI7WxGeTECZVkODjlr4istGsqK+qwgWdSu1ufNa/88QQZ+6tbAw=="></signature>
+    <signature xmlns="https://atomicmicro.blog/ns/1.0" key-id="2026-10" algorithm="ed25519" value="0WIvd29D1ZO5Ln8qB4aoT2BqqnhWDq+pV6XQHvyva91DXe8rEzvvqjd3reT4FBwfkPArFaGqt0PxXT4PQjAtBQ=="></signature>
   </entry>
   <entry xmlns="http://www.w3.org/2005/Atom">
     <id>tag:localhost,2026-10:8198/post-1</id>
     <title></title>
-    <published>2026-10-22T17:02:46Z</published>
-    <updated>2026-10-22T17:02:46Z</updated>
+    <published>2026-10-22T22:49:25Z</published>
+    <updated>2026-10-22T22:49:25Z</updated>
     <author>
       <name>Fixture</name>
       <uri>http://localhost:8198/</uri>
     </author>
     <content type="text">Plain text with ümlauts, &#34;quotes&#34;, &lt;angle&gt; &amp; ampersand 🦫</content>
     <link rel="alternate" href="http://localhost:8198/posts/1" type="text/html"></link>
-    <signature xmlns="https://atomicmicro.blog/ns/1.0" key-id="2026-10" algorithm="ed25519" value="nQnUi8nnbwUmZBzenNEpZ35bE2Ec60cnx8oZ9Hwin783rJ33Ivw2u+33PZcgJ4UcwNypKKGMTIchK+62WxMXCA=="></signature>
+    <signature xmlns="https://atomicmicro.blog/ns/1.0" key-id="2026-10" algorithm="ed25519" value="NHka3FeJRF4XZGJHXuYNEJjdBRFbV9UjZDK4kZgBtBSwOAXdbkl8om6eip0ppdGIPJDITfTvXgV8+YKNW77ZAg=="></signature>
   </entry>
 </feed>

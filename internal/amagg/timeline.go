@@ -190,6 +190,7 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	w.Header().Set("Link", "<"+s.webmentionURL()+`>; rel="webmention"`)
 	feeds := map[int64]*Feed{}
 	if strings.Contains(r.Header.Get("Accept"), atom.MediaType) {
 		ae, err := s.reserve(e, feeds)
@@ -211,7 +212,7 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 		web.ServerError(w, err)
 		return
 	}
-	page := threadPage{Aggregator: s.cfg.Aggregator.Name, ThreadURL: s.postURL(e.N) + "/thread.atom"}
+	page := threadPage{Aggregator: s.cfg.Aggregator.Name, ThreadURL: s.postURL(e.N) + "/thread.atom", WebMention: s.webmentionURL()}
 	for _, it := range items {
 		ae, err := s.reserve(it.entry, feeds)
 		if err != nil {

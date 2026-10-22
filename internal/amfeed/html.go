@@ -12,6 +12,7 @@ type pageData struct {
 	AuthorURI  string
 	FeedURL    string
 	KeysURL    string
+	WebMention string // endpoint, advertised on every page
 	Entries    []pageEntry
 }
 
@@ -33,6 +34,7 @@ func (s *Server) pageData(entries []*Entry) pageData {
 		AuthorURI:  s.cfg.Feed.AuthorURI,
 		FeedURL:    s.feedURL(),
 		KeysURL:    s.keysURL,
+		WebMention: s.webmentionURL(),
 	}
 	for _, e := range entries {
 		pe := pageEntry{
@@ -71,6 +73,7 @@ const baseHTML = `<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{.Title}}</title>
 <link rel="alternate" type="application/atom+xml" href="{{.FeedURL}}">
+<link rel="webmention" href="{{.WebMention}}">
 <style>
 body { font-family: system-ui, sans-serif; max-width: 40rem; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
 article { border-top: 1px solid #ddd; padding: 1rem 0; }
