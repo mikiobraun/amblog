@@ -223,8 +223,44 @@ ul.plain li .danger {
   overflow-wrap: anywhere;
 }
 
+/* Feed content is arbitrary: long words, URLs, code and wide media must stay
+   inside the card. */
+.entry {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.entry .content pre {
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+
+.entry .content :is(img, video, iframe, svg) {
+  max-width: 100%;
+  height: auto;
+}
+
+.entry .content table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+/* Five lines of text plus the content's top margin. */
+.entry .fold.folded {
+  max-height: calc(5 * 1.5em + 0.5rem);
+  overflow: hidden;
+  mask-image: linear-gradient(to bottom, black 60%, transparent);
+}
+
+.entry .fold-toggle {
+  margin-left: -0.5rem;
+  font-size: 0.9rem;
+}
+
 .entry .meta {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
   align-items: baseline;
   font-size: 0.9rem;
@@ -252,10 +288,6 @@ ul.plain li .danger {
 
 .entry .content.text {
   white-space: pre-wrap;
-}
-
-.entry .content img {
-  max-width: 100%;
 }
 
 .entry .actions {

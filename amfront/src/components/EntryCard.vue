@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import DOMPurify from 'dompurify'
 import { linkHref, type Entry } from '../lib/atom'
 import type { VerifyStatus } from '../lib/sign'
@@ -41,6 +41,31 @@ const published = computed(() => {
   return isNaN(d.getTime()) ? props.entry.published : d.toLocaleString()
 })
 
+// Long content is folded to FOLD_LINES. Only fold when that hides a fair
+// amount; folding a six-line post to five just adds a click. The content's
+// height changes after mount (images, fonts), so it is observed.
+const FOLD_LINES = 5
+const body = ref<HTMLElement>()
+const foldable = ref(false)
+const expanded = ref(false)
+let observer: ResizeObserver | undefined
+
+function measure() {
+  const el = body.value
+  if (!el) return
+  const line = parseFloat(getComputedStyle(el).lineHeight) || 24
+  foldable.value = el.offsetHeight > line * (FOLD_LINES + 2)
+}
+
+onMounted(() => {
+  measure()
+  if (body.value && typeof ResizeObserver !== 'undefined') {
+    observer = new ResizeObserver(measure)
+    observer.observe(body.value)
+  }
+})
+onBeforeUnmount(() => observer?.disconnect())
+
 const badge = computed(() => {
   switch (props.verified.state) {
     case 'pending':
@@ -77,8 +102,15 @@ const badge = computed(() => {
         <span v-else>{{ entry.inReplyTo.ref }}</span>
       </p>
       <h2 v-if="entry.title">{{ entry.title }}</h2>
-      <div v-if="html" class="content" v-html="html" />
-      <p v-else-if="entry.content" class="content text">{{ entry.content.body }}</p>
+      <div :class="['fold', { folded: foldable && !expanded }]">
+        <div ref="body">
+          <div v-if="html" class="content" v-html="html" />
+          <p v-else-if="entry.content" class="content text">{{ entry.content.body }}</p>
+        </div>
+      </div>
+      <button v-if="foldable" class="link fold-toggle" @click="expanded = !expanded">
+        {{ expanded ? '▴ less' : '▾ more' }}
+      </button>
       <div class="actions">
         <button class="link" @click="emit('reply')">Reply</button>
         <button v-if="threadUrl" class="link" @click="emit('thread')">Thread</button>
