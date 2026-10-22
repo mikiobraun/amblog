@@ -78,7 +78,7 @@ The base is existing W3C and IETF standards. On top of that we add a few small e
 Interop with other social protocols (ActivityPub, OStatus, AT Protocol) is a non-goal. Interop that does matter:
 
 - **Feed readers** — every feed is a valid Atom feed, readable by any feed reader.
-- **WebMention-enabled blogs** — replies to blog posts are delivered via standard WebMention, and blogs can send WebMentions to us (subject to spam control, see Open Questions).
+- **WebMention-enabled blogs** — replies to blog posts are delivered via standard WebMention, and blogs can send WebMentions to us (subject to spam control, see [Spam Control](#spam-control-proof-of-work-challenge)).
 
 ### CORS
 
@@ -154,8 +154,9 @@ The feed server is the simplest component. It stores your posts and serves them 
 3. Serve individual entry permalinks
 4. Publish signing keys
 5. Receive WebMentions for its entries and serve them as reply feeds
-6. Announce updates via WebSub (optional)
-7. Publish login challenges, so the owner can prove ownership of the identity to aggregators
+6. Send WebMentions for its own replies
+7. Act as the WebSub hub for its feed, pushing updates to subscribed aggregators
+8. Publish login challenges, so the owner can prove ownership of the identity to aggregators
 
 ### Data Model
 
@@ -168,7 +169,7 @@ An entry is an Atom entry (RFC 4287) with extensions:
   <title>Mikio's Feed</title>
   <link href="https://miki.one/feed.atom" rel="self"/>
   <link href="https://miki.one/" rel="alternate"/>
-  <link href="https://websub-hub.example/" rel="hub"/>
+  <link href="https://miki.one/websub" rel="hub"/>
   <id>https://miki.one/feed.atom</id>
   <updated>2024-12-01T12:00:00Z</updated>
   <author>
@@ -282,6 +283,10 @@ Returns a feed of replies to the given entry (RFC 4685 reply feed), built from t
 
 WebMention endpoint for the feed server's own entries. Advertised via `<link rel="webmention">` on entry pages. Requires a proof-of-work challenge (see [Spam Control](#spam-control-proof-of-work-challenge)).
 
+#### `POST /websub`
+
+WebSub hub for the feed (see [WebSub](#websub)). Advertised via `<link rel="hub">` in the feed.
+
 #### `POST /api/entries`
 
 Create a new entry. Token-authenticated.
@@ -361,11 +366,24 @@ Authorization: Bearer <admin-token>
 {"name": "my-phone", "expires": "2025-12-01T00:00:00Z"}
 ```
 
-### WebSub Integration
+### WebSub
 
-The feed advertises a WebSub hub via `<link rel="hub">` in the feed. When a new entry is published, the feed server pings the hub. Aggregators that have subscribed to the hub receive the update in real time instead of polling.
+amfeed is its own [WebSub](https://www.w3.org/TR/websub/) hub. The feed advertises it with `<link rel="hub" href="<base URL>/websub">` next to its `rel="self"` link.
 
-WebSub is orthogonal — the system works fine with plain polling, and WebSub can be added to any existing feed server without protocol changes.
+- **Subscribing:** subscribers (aggregators) send `POST /websub` with `hub.mode=subscribe`, `hub.topic` (the feed URL), `hub.callback`, and optionally `hub.lease_seconds` and `hub.secret`. amfeed verifies the intent by calling the callback with a challenge, as WebSub requires. The feed's own URL is the only topic.
+- **Publishing:** when an entry is created, edited or deleted, amfeed POSTs the first page of the feed to every subscriber's callback, signed with `X-Hub-Signature` when the subscriber gave a secret. Subscribers ingest it like a polled page.
+- **Delivery** is best-effort, with a few retries. Subscriptions expire with their lease, and subscribers renew them.
+
+Other feed servers may advertise any hub; aggregators subscribe to whichever hub a feed names. Push complements polling and doesn't replace it (see [Polling](#polling)).
+
+### Sending WebMentions
+
+When an entry has a `thr:in-reply-to` `href`, amfeed sends a WebMention with `source` set to the entry's permalink and `target` set to that `href`, to the endpoint discovered at the target (HTTP `Link` header or `<link rel="webmention">`). Likes and reposts do the same with their target. When the entry is edited or deleted, amfeed sends it again, so the receiver re-fetches the source.
+
+- Sending happens in the background after the API call returns; failures are retried a few times, then dropped.
+- If the receiver asks for proof of work, amfeed solves it.
+- A reply made from an aggregator's timeline points at that aggregator's post page, so the aggregator receives the reply at once. A reply to a plain blog reaches the blog directly, with no aggregator involved.
+- Aggregators that ingest the reply still forward it to the source (see [Conversations and Replies](#conversations-and-replies)). WebMention is idempotent per source and target, so the duplicate is harmless.
 
 ### Storage
 
@@ -464,6 +482,8 @@ You prove you own an identity the way ACME's HTTP-01 challenge proves you own a 
 
 Registration and login are the same flow. The first successful check creates the account; later checks log in, e.g. from a new device.
 
+People find aggregators by word of mouth. There is no directory and no discovery protocol.
+
 Who may register is configured per aggregator (`[aggregator] registration`):
 
 - **`invite`** (default): the first login must carry an invite code (`"invite": "…"` in `POST /api/login`). The operator creates single-use codes with the `amagg` command line tool.
@@ -560,6 +580,7 @@ This also settles which entry a reply's `thr:in-reply-to ref` points to: once an
 - The last seen `updated` never advances past the aggregator's current time, so an entry dated in the future can't hide later updates.
 - The first fetch of a feed reads at most a few pages; history beyond that is not backfilled.
 - The interval adapts per feed between `min_interval` and `max_interval`: shorter for feeds that change often, backing off for quiet or failing ones.
+- Feeds with a WebSub subscription are still polled, at `max_interval`, so a lost push delays an entry but doesn't lose it.
 
 ### Timeline Generation
 
@@ -608,9 +629,11 @@ None of these are signed fields, so the signature stays valid.
 
 A reply is just an Atom entry on the replier's feed server, with `thr:in-reply-to`. Threads are matched by `ref` (the Atom entry `id`), never by `href`, since every aggregator shows the same post under its own URL.
 
+Threads are per island: a thread shows the replies this aggregator has. Frontends show the aggregator's thread and don't offer the source's `replies.atom`.
+
 #### Inside an Island
 
-No WebMention is needed. The aggregator ingests its members' feeds, sees the reply's `thr:in-reply-to ref`, and attaches it to the thread.
+The aggregator ingests its members' feeds (pushed via WebSub, or polled), sees the reply's `thr:in-reply-to ref`, and attaches it to the thread. A reply made from the island's timeline points at the island's post page, so the member's feed server also sends the island a WebMention for it (see [Sending WebMentions](#sending-webmentions)). Whichever arrives first wins; the other is a duplicate.
 
 #### Forwarding to the Source
 
@@ -644,7 +667,7 @@ Alice is on island A. Bob reads A's public timeline but is a member of island B,
 
 If Bob had replied to Alice's original URL instead, the reply would go to Alice's feed server only, and island A would not see it. That's consistent with islands.
 
-**Sending rule:** whoever sends a WebMention for a reply sends it to the endpoint discovered at the `in-reply-to` `href`. **Receiving rule:** an aggregator that receives a reply forwards it to the source (via `via`). WebMention is idempotent per source+target, so repeated deliveries are harmless.
+**Sending rule:** whoever sends a WebMention for a reply (the replier's feed server, and every aggregator that ingests the reply) sends it to the endpoint discovered at the `in-reply-to` `href`. **Receiving rule:** an aggregator that receives a reply forwards it to the source (via `via`). WebMention is idempotent per source+target, so repeated deliveries are harmless.
 
 #### Islands Consuming Islands
 
@@ -682,6 +705,9 @@ The solution is valid if `SHA-256(challenge || nonce)` has at least `difficulty`
 
 - **Stateless challenge:** the challenge encodes an expiry, a random value, and an HMAC (with a server secret) over expiry, random value, source and target. The server stores nothing until a solution arrives, and a challenge only works for the mention it was issued for.
 - **Single-use:** the server remembers used challenges until they expire and rejects reuse. One solution buys exactly one WebMention.
+- **Waived for subscribed sites:** an aggregator skips the challenge when the `source` lies under a site it already subscribes to: a member's author URI, or the site (`alternate`) URL of a followed feed. This lets plain blogs that a member follows reply without solving anything.
+
+Whatever gets through is ingested like any other entry: verified if it can be, otherwise shown as unverified with where it came from.
 
 The sender is a server (an aggregator forwarding a reply, or a feed server), so the cost lands on infrastructure, not on users. Cheap for one-off mentions, expensive for bulk spam.
 
@@ -787,7 +813,7 @@ The frontend is a pure client. It holds no user data, no social graph, no conten
 4. Display entries with threading
 5. Compose and publish new entries to feed server
 
-amfront does not send WebMentions. The aggregator ingests the user's reply from their feed and forwards it (see [Conversations and Replies](#conversations-and-replies)).
+amfront does not send WebMentions. The user's feed server sends them for the user's replies, and aggregators forward replies they ingest (see [Conversations and Replies](#conversations-and-replies)).
 
 ### Architecture
 
@@ -837,7 +863,7 @@ The reference implementation keeps this in the browser (localStorage). A fronten
 
 1. User writes a post in the compose UI
 2. amfront sends `POST /api/entries` to the user's feed server. For a reply, `in_reply_to` carries the parent's `id` as `ref` and the `alternate` URL the user saw as `href`
-3. Feed server creates the entry, signs it, adds it to the feed (and pings WebSub)
+3. Feed server creates the entry, signs it, adds it to the feed, pushes the feed to its WebSub subscribers, and for a reply sends a WebMention to the `href`
 4. The aggregator ingests the entry, threads it, and forwards replies to the source
 
 ### Multiple Aggregators
@@ -948,9 +974,6 @@ key_created = 2026-10-21T21:00:00Z
 
 [storage]
 path = "amfeed.db"
-
-# [websub]
-# hub_url = "https://websub-hub.example/"
 ```
 
 ### amagg
@@ -1041,29 +1064,18 @@ Others:     bring their own feeds and frontends
 
 ## 11. Open Questions
 
-1. **Feed discovery** — How does a new user find aggregators to join? A directory? A well-known endpoint? Word of mouth (like early Twitter)?
+1. **Follow graph protection** — Signatures keep an aggregator from forging posts, and your content lives on your feed server, but the aggregator sees your follow graph and reading patterns, and shared following lists publish the graph. How much protection does the follow graph need, e.g. lists readable only by aggregators you name?
 
-2. **DMs** — Private messaging is explicitly out of scope for v1. Aggregators could add it as a non-federated feature, or we could spec encrypted entries later.
+### Deferred
 
-3. **Rich media** — Media hosting is the feed server's problem. Should amfeed include media upload, or delegate to external hosts?
+- **Rich media** — Media hosting is the feed server's problem. Should amfeed include media upload, or delegate to external hosts?
+- **Entry size limits** — Should feeds enforce a max entry size? Micro-blogging suggests yes (keep it short), but the protocol shouldn't prevent long-form.
+- **Likes in feed readers** — Likes and reposts are entries, so they show up as near-empty items in plain feed readers. Should they live in a separate feed?
+- **Hosting for people without servers** — amfeed is single-author. A separate multi-tenant host (working name *amhost*) would serve identities like `https://amhost.example/mikio/` (the protocol supports identities with a path). Open: account management (possibly a `forward_auth` proxy passing trusted user headers to a localhost-bound backend), and whether the host holds signing keys (custodial) or users bring their own.
 
-4. **Aggregator trust** — If you register on an evil aggregator, it has your follow graph and sees your reading patterns. Mitigation: follow graph portability + ability to leave. The aggregator can't forge your posts (signatures), and your content lives on your feed server.
+### Out of Scope
 
-5. **WebSub hub operation** — Run your own hub, use a public hub, or have the aggregator run one? Pragmatically, a few public hubs would emerge.
-
-6. **Entry size limits** — Should feeds enforce a max entry size? Micro-blogging suggests yes (keep it short), but the protocol shouldn't prevent long-form.
-
-7. **Plain WebMention senders** — Blogs (e.g. WordPress) don't solve PoW challenges. Options: accept mentions without proof into a moderation queue, or waive the challenge for sources the aggregator already subscribes to.
-
-8. **Likes in feed readers** — Likes and reposts are entries, so they show up as near-empty items in plain feed readers. Should they live in a separate feed?
-
-9. **Feed servers without an aggregator** — A reply posted to a feed server that no aggregator ingests notifies nobody. Should amfeed also send WebMentions for replies? Duplicates are harmless.
-
-10. **Island-to-island forwarding** — When island B consumes island A, should B forward replies along the `via` chain (B → A → source), or straight to the source, skipping A? To be settled by experiment.
-
-11. **Thread completeness in the UI** — Threads are per-island by design. How should frontends show that honestly ("12 replies here · 30 more elsewhere"), and when should they offer the source's `replies.atom` for the full picture?
-
-12. **Hosting for people without servers** — amfeed is single-author. A separate multi-tenant host (working name *amhost*) would serve identities like `https://amhost.example/mikio/` (the protocol supports identities with a path). Open: account management (possibly a `forward_auth` proxy passing trusted user headers to a localhost-bound backend), and whether the host holds signing keys (custodial) or users bring their own.
+- **Direct messages.**
 
 ---
 
@@ -1094,15 +1106,16 @@ Others:     bring their own feeds and frontends
 ### Phase 3: Interactions
 
 - [ ] `amfeed` + `amagg`: WebMention endpoint (incoming), reply feeds
+- [ ] `amfeed`: Sending WebMentions for replies (with proof of work)
 - [ ] `amagg`: WebMention forwarding to source
-- [ ] `amfeed` + `amagg`: Proof-of-work challenge (issue, verify, single-use)
+- [ ] `amfeed` + `amagg`: Proof-of-work challenge (issue, verify, single-use), waived for subscribed sites
 - [ ] `amfront`: Like/repost actions
 - [ ] `amagg`: Islands consuming islands
 
 ### Phase 4: Real-Time
 
-- [ ] `amfeed`: WebSub hub announcement
-- [ ] `amagg`: WebSub subscription management
+- [ ] `amfeed`: Its own WebSub hub (subscriptions, intent verification, push on create/edit/delete)
+- [ ] `amagg`: WebSub subscriptions (subscribe, renew, ingest pushes, slow polling as fallback)
 - [ ] `amfront`: Live timeline updates (SSE or WebSocket from amagg)
 
 ### Phase 5: Polish
