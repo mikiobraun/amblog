@@ -10,6 +10,12 @@
 # Everything lives in data/dev (gitignored): configs, databases, logs, and an
 # am config per person.
 #
+# The servers always listen on localhost. Their public URLs (base URLs, and so
+# the identities) come from AMDEV_URL, read by setup only. {name} is alice,
+# bob, carol or agg; {port} is the port above. Behind a reverse proxy:
+#   AMDEV_URL='https://{name}.dev.example' scripts/dev.sh setup
+# Default: http://localhost:{port}
+#
 # Usage: scripts/dev.sh setup     build, create, start, log alice and bob in, post a little
 #        scripts/dev.sh start     start the servers (after a stop)
 #        scripts/dev.sh stop      stop the servers
@@ -23,6 +29,12 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 DEV=$ROOT/data/dev
 FEEDS=(alice:9100 bob:9101 carol:9102)
 AGG_PORT=9200
+AMDEV_URL=${AMDEV_URL:-http://localhost:{port\}}
+
+url_of() { # name, port
+	local u=${AMDEV_URL//\{name\}/$1}
+	echo "${u//\{port\}/$2}"
+}
 
 port_of() {
 	for f in "${FEEDS[@]}"; do
@@ -94,13 +106,15 @@ setup() {
 	for f in "${FEEDS[@]}"; do
 		local name=${f%%:*} port=${f##*:}
 		mkdir -p "$DEV/$name"
-		"$ROOT/amfeed" init -dir "$DEV/$name" -base-url "http://localhost:$port" \
+		"$ROOT/amfeed" init -dir "$DEV/$name" -base-url "$(url_of "$name" "$port")" \
 			-name "${name^}" -listen "localhost:$port" >"$DEV/$name/init.txt"
 		local token
 		token=$(grep -o 'amf_[A-Za-z0-9_-]*' "$DEV/$name/init.txt" | head -1)
-		am_as "$name" config -feed "http://localhost:$port" -token "$token" >/dev/null
+		am_as "$name" config -feed "$(url_of "$name" "$port")" -token "$token" >/dev/null
 	done
-	"$ROOT/amagg" init -dir "$DEV/agg" -base-url "http://localhost:$AGG_PORT" \
+	local agg_url
+	agg_url=$(url_of agg $AGG_PORT)
+	"$ROOT/amagg" init -dir "$DEV/agg" -base-url "$agg_url" \
 		-name "Dev Island" -listen "localhost:$AGG_PORT" >/dev/null
 	start
 
@@ -108,21 +122,24 @@ setup() {
 	am_as bob post "Bob here. Testing the island." >/dev/null
 	am_as carol post "Carol, outside the island, followed by Alice." >/dev/null
 	for name in alice bob; do
-		am_as "$name" login -invite "$("$ROOT/amagg" invite -config "$DEV/agg/amagg.toml")" "http://localhost:$AGG_PORT" >/dev/null
+		am_as "$name" login -invite "$("$ROOT/amagg" invite -config "$DEV/agg/amagg.toml")" "$agg_url" >/dev/null
 	done
-	am_as alice follow http://localhost:9102/ >/dev/null
+	am_as alice follow "$(url_of carol "$(port_of carol)")/" >/dev/null
 	echo
 	info
 }
 
+# URLs come from the configs, so info matches whatever AMDEV_URL setup used.
 info() {
-	echo "Aggregator: http://localhost:$AGG_PORT  (island: http://localhost:$AGG_PORT/timeline.atom)"
+	local agg_url
+	agg_url=$(grep -oP '^\s*base_url\s*=\s*"\K[^"]*' "$DEV/agg/amagg.toml")
+	echo "Aggregator: $agg_url  (island: ${agg_url%/}/timeline.atom)"
 	echo "New invite: $ROOT/amagg invite -config $DEV/agg/amagg.toml"
 	echo
 	for f in "${FEEDS[@]}"; do
 		local name=${f%%:*}
-		echo "$name: feed server http://localhost:${f##*:}"
-		grep -E '^(token|agg_token|timeline_url)' "$DEV/$name.toml" | sed 's/^/  /'
+		echo "$name: (localhost:${f##*:})"
+		grep -E '^(feed_url|token|agg_token|timeline_url)' "$DEV/$name.toml" | sed 's/^/  /'
 	done
 	echo
 	echo "Run am as someone:  scripts/dev.sh am alice timeline"
@@ -141,7 +158,7 @@ am)
 	am_as "${@:2}"
 	;;
 *)
-	sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+	sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'
 	exit 2
 	;;
 esac

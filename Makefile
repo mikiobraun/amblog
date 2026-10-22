@@ -19,11 +19,12 @@ check:
 fixtures:
 	amfront/scripts/gen-fixtures.sh
 
-# amfront dev server on :8300.
+# amfront dev server on :8300. Extra hostnames: AMFRONT_ALLOWED_HOSTS (env or amfront/.env.local).
 front:
 	cd amfront && npm run dev
 
 # Local network: alice, bob, carol (amfeed :9100-9102) and an aggregator (:9200).
+# Public URLs behind a reverse proxy: make dev AMDEV_URL='https://{name}.dev.example'
 dev:
 	scripts/dev.sh setup
 
