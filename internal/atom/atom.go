@@ -40,6 +40,9 @@ type Entry struct {
 	Content   *Content   `xml:"content"`
 	Links     []Link     `xml:"link"`
 	InReplyTo *InReplyTo `xml:"http://purl.org/syndication/thread/1.0 in-reply-to"`
+	// Total is RFC 4685 thr:total, the number of replies the publisher knows
+	// (set by aggregators; not signed).
+	Total     string     `xml:"http://purl.org/syndication/thread/1.0 total,omitempty"`
 	Verb      string     `xml:"https://atomicmicro.blog/ns/1.0 verb,omitempty"`
 	Source    *Source    `xml:"source"`
 	Signature *Signature `xml:"https://atomicmicro.blog/ns/1.0 signature"`

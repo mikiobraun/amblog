@@ -473,6 +473,12 @@ func TestThreads(t *testing.T) {
 	for _, e := range island.Entries {
 		if e.Content.Body == "root" {
 			rootAlt = e.LinkHref("alternate")
+			if e.Total != "1" {
+				t.Errorf("root thr:total = %q, want 1 (direct replies)", e.Total)
+			}
+		}
+		if e.Content.Body == "alice answers bob" && e.Total != "0" {
+			t.Errorf("leaf thr:total = %q, want 0", e.Total)
 		}
 		if e.Content.Body == "dave's post" {
 			t.Error("a fetched parent must not appear in timelines")

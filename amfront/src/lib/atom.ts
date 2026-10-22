@@ -44,6 +44,8 @@ export interface Entry {
   content: Content | null
   links: Link[]
   inReplyTo: InReplyTo | null
+  /** RFC 4685 thr:total: replies the publisher knows, null if not given. */
+  total: number | null
   verb: string
   signature: Signature | null
 }
@@ -84,6 +86,7 @@ function parseEntry(el: Element): Entry {
   const content = child(el, ATOM_NS, 'content')
   const inReplyTo = child(el, THREAD_NS, 'in-reply-to')
   const signature = child(el, ATOMIC_NS, 'signature')
+  const total = child(el, THREAD_NS, 'total')?.textContent?.trim() ?? ''
   return {
     id: text(el, 'id'),
     title: text(el, 'title'),
@@ -97,6 +100,7 @@ function parseEntry(el: Element): Entry {
       ref: inReplyTo.getAttribute('ref') ?? '',
       href: inReplyTo.getAttribute('href') ?? '',
     },
+    total: /^\d+$/.test(total) ? Number(total) : null,
     verb: child(el, ATOMIC_NS, 'verb')?.textContent ?? '',
     signature: signature && {
       keyId: signature.getAttribute('key-id') ?? '',

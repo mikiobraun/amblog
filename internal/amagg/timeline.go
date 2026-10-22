@@ -137,6 +137,13 @@ func (s *Server) reserve(e *Entry, feeds map[int64]*Feed) (*atom.Entry, error) {
 	}
 	ae.Links = append(links, atom.Link{Rel: "via", Href: via})
 
+	// Our count replaces any count from upstream.
+	replies, err := s.store.CountReplies(e.ID)
+	if err != nil {
+		return nil, err
+	}
+	ae.Total = strconv.Itoa(replies)
+
 	// An entry relayed by another aggregator already names its original feed.
 	if ae.Source == nil && e.FeedID.Valid {
 		f, ok := feeds[e.FeedID.Int64]

@@ -584,6 +584,7 @@ When the aggregator serves an entry (in a timeline or on a post page), it:
 - sets `link rel="alternate"` to its **own** URL for the post, so replies made from here point here
 - adds `link rel="via"` pointing to the URL it got the entry from
 - keeps `atom:source` with the original feed's metadata (`id`, `title`, `link rel="self"`)
+- sets `thr:total` (RFC 4685) to the number of direct replies it has stored, replacing any upstream value
 - advertises its own WebMention endpoint on the post page
 
 None of these are signed fields, so the signature stays valid.
@@ -598,6 +599,7 @@ None of these are signed fields, so the signature stays valid.
     <title>Mikio's Feed</title>
     <link rel="self" href="https://miki.one/feed.atom"/>
   </source>
+  <thr:total>2</thr:total>
   <!-- original content, thr:in-reply-to, atomic:signature unchanged -->
 </entry>
 ```

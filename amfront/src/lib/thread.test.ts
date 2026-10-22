@@ -13,6 +13,7 @@ function entry(id: string, parent?: string): Entry {
     content: null,
     links: [],
     inReplyTo: parent ? { ref: parent, href: '' } : null,
+    total: null,
     verb: '',
     signature: null,
   }

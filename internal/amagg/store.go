@@ -421,6 +421,14 @@ func (s *Store) ReplaceEntry(e *Entry) error {
 	return err
 }
 
+// CountReplies returns the number of direct replies to the entry with the
+// given Atom id.
+func (s *Store) CountReplies(id string) (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM entries WHERE in_reply_to_ref = ?`, id).Scan(&n)
+	return n, err
+}
+
 // Replies returns the direct replies to the entry with the given Atom id,
 // oldest first.
 func (s *Store) Replies(id string) ([]*Entry, error) {

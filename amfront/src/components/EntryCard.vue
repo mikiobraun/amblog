@@ -113,7 +113,9 @@ const badge = computed(() => {
       </button>
       <div class="actions">
         <button class="link" @click="emit('reply')">Reply</button>
-        <button v-if="threadUrl" class="link" @click="emit('thread')">Thread</button>
+        <button v-if="threadUrl" class="link" @click="emit('thread')">
+          {{ entry.total ? `💬 ${entry.total} ${entry.total === 1 ? 'reply' : 'replies'}` : 'Thread' }}
+        </button>
         <button v-if="ownSeq !== null" class="link danger" @click="emit('delete')">Delete</button>
       </div>
     </template>

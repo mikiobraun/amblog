@@ -22,6 +22,7 @@ function testEntry(): Entry {
       { rel: 'enclosure', href: 'https://example.com/b.jpg', type: 'image/jpeg' },
     ],
     inReplyTo: { ref: 'tag:other.example,2026-10:post-9', href: 'https://other.example/posts/9' },
+    total: null,
     verb: '',
     signature: null,
   }
