@@ -111,6 +111,25 @@ export async function verify(e: Entry, keys: KeyDoc): Promise<void> {
   }
 }
 
+export type VerifyStatus =
+  | { state: 'pending' }
+  | { state: 'ok' }
+  | { state: 'unsigned' }
+  | { state: 'failed'; reason: string }
+  | { state: 'unverifiable'; reason: string }
+
+/** Verifies an entry and reports the outcome as a status for display. */
+export async function verifyStatus(keys: KeyCache, e: Entry): Promise<VerifyStatus> {
+  if (!e.signature) return { state: 'unsigned' }
+  try {
+    await keys.verify(e)
+    return { state: 'ok' }
+  } catch (err) {
+    const reason = (err as Error).message
+    return err instanceof UnverifiableError ? { state: 'unverifiable', reason } : { state: 'failed', reason }
+  }
+}
+
 /** Fetches key documents, once per author URI. */
 export class KeyCache {
   private docs = new Map<string, Promise<KeyDoc>>()

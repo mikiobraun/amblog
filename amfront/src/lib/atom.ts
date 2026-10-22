@@ -51,6 +51,7 @@ export interface Entry {
 export interface Feed {
   id: string
   title: string
+  author: Person | null
   links: Link[]
   entries: Entry[]
 }
@@ -75,8 +76,11 @@ function parseLinks(el: Element): Link[] {
   }))
 }
 
+function parsePerson(el: Element | null): Person | null {
+  return el && { name: text(el, 'name'), uri: text(el, 'uri') }
+}
+
 function parseEntry(el: Element): Entry {
-  const author = child(el, ATOM_NS, 'author')
   const content = child(el, ATOM_NS, 'content')
   const inReplyTo = child(el, THREAD_NS, 'in-reply-to')
   const signature = child(el, ATOMIC_NS, 'signature')
@@ -86,7 +90,7 @@ function parseEntry(el: Element): Entry {
     summary: text(el, 'summary'),
     published: text(el, 'published'),
     updated: text(el, 'updated'),
-    author: author && { name: text(author, 'name'), uri: text(author, 'uri') },
+    author: parsePerson(child(el, ATOM_NS, 'author')),
     content: content && { type: content.getAttribute('type') ?? '', body: content.textContent ?? '' },
     links: parseLinks(el),
     inReplyTo: inReplyTo && {
@@ -113,7 +117,7 @@ export function parseAtom(xml: string): Feed {
     throw new Error(`not an Atom document (root <${root.localName}> in namespace ${root.namespaceURI})`)
   }
   if (root.localName === 'entry') {
-    return { id: '', title: '', links: [], entries: [parseEntry(root)] }
+    return { id: '', title: '', author: null, links: [], entries: [parseEntry(root)] }
   }
   if (root.localName !== 'feed') {
     throw new Error(`unexpected root element <${root.localName}>`)
@@ -121,6 +125,7 @@ export function parseAtom(xml: string): Feed {
   return {
     id: text(root, 'id'),
     title: text(root, 'title'),
+    author: parsePerson(child(root, ATOM_NS, 'author')),
     links: parseLinks(root),
     entries: children(root, ATOM_NS, 'entry').map(parseEntry),
   }
@@ -132,9 +137,11 @@ export function linkHref(links: Link[], rel: string): string {
   return l?.href ?? ''
 }
 
-/** Fetches and parses an Atom document. */
-export async function fetchAtom(url: string): Promise<Feed> {
-  const resp = await fetch(url, { headers: { Accept: ATOM_MEDIA_TYPE } })
+/** Fetches and parses an Atom document, with a bearer token if given. */
+export async function fetchAtom(url: string, token = ''): Promise<Feed> {
+  const headers: Record<string, string> = { Accept: ATOM_MEDIA_TYPE }
+  if (token) headers.Authorization = `Bearer ${token}`
+  const resp = await fetch(url, { headers })
   if (!resp.ok) {
     throw new Error(`GET ${url}: ${resp.status} ${resp.statusText}`)
   }

@@ -154,16 +154,73 @@ textarea {
 
 .timeline-header {
   display: flex;
-  justify-content: space-between;
   align-items: baseline;
+  gap: 0.5rem;
   margin: 1.5rem 0 0.75rem;
 }
 
 .timeline-header h2 {
+  flex: 1;
   margin: 0;
   font-size: 1rem;
   color: var(--muted);
   font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+select {
+  font: inherit;
+  font-size: 0.9rem;
+  color: inherit;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.2rem 0.4rem;
+}
+
+.settings h2 {
+  margin: 0 0 1rem;
+  font-size: 1.1rem;
+}
+
+.settings h3 {
+  margin: 1.5rem 0 0.25rem;
+  font-size: 1rem;
+}
+
+form.inline {
+  display: flex;
+  gap: 0.5rem;
+}
+
+form.inline button {
+  font: inherit;
+  white-space: nowrap;
+}
+
+ul.plain {
+  list-style: none;
+  padding: 0;
+}
+
+ul.plain li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.25rem 0;
+  overflow-wrap: anywhere;
+}
+
+ul.plain li .danger {
+  margin-left: auto;
+}
+
+.credential {
+  border: 1px dashed var(--accent);
+  border-radius: var(--radius);
+  padding: 0 0.75rem;
+  margin-bottom: 1rem;
+  overflow-wrap: anywhere;
 }
 
 .entry .meta {
@@ -226,7 +283,8 @@ textarea {
 }
 
 .sig.pending,
-.sig.unverifiable {
+.sig.unverifiable,
+.sig.unsigned {
   color: var(--muted);
 }
 

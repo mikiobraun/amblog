@@ -2,22 +2,30 @@
 import { computed } from 'vue'
 import DOMPurify from 'dompurify'
 import { linkHref, type Entry } from '../lib/atom'
-
-export type VerifyStatus =
-  | { state: 'pending' }
-  | { state: 'ok' }
-  | { state: 'failed'; reason: string }
-  | { state: 'unverifiable'; reason: string }
+import type { VerifyStatus } from '../lib/sign'
 
 const props = defineProps<{
   entry: Entry
   verified: VerifyStatus
   /** Post number on our own feed server, or null if not ours. */
   ownSeq: number | null
+  /** The entry's thread feed on the aggregator, or "" if there is none. */
+  threadUrl?: string
 }>()
-const emit = defineEmits<{ reply: []; delete: [] }>()
+const emit = defineEmits<{ reply: []; delete: []; thread: [] }>()
 
 const alternate = computed(() => linkHref(props.entry.links, 'alternate'))
+
+// Where the entry came from, shown for unsigned entries instead of the
+// author, whose identity is only a claim then.
+const from = computed(() => {
+  const src = linkHref(props.entry.links, 'via') || alternate.value
+  try {
+    return new URL(src).host
+  } catch {
+    return ''
+  }
+})
 
 // amfeed tombstones have empty content and title (the API rejects empty posts).
 const deleted = computed(() => !props.entry.content?.body && !props.entry.title && !props.entry.verb)
@@ -39,6 +47,8 @@ const badge = computed(() => {
       return { text: '…', title: 'verifying signature' }
     case 'ok':
       return { text: '✓', title: 'signature verified' }
+    case 'unsigned':
+      return { text: `unverified · from ${from.value}`, title: 'not signed; the author is only a claim' }
     case 'failed':
       return { text: '✗', title: `signature invalid: ${props.verified.reason}` }
     case 'unverifiable':
@@ -71,6 +81,7 @@ const badge = computed(() => {
       <p v-else-if="entry.content" class="content text">{{ entry.content.body }}</p>
       <div class="actions">
         <button class="link" @click="emit('reply')">Reply</button>
+        <button v-if="threadUrl" class="link" @click="emit('thread')">Thread</button>
         <button v-if="ownSeq !== null" class="link danger" @click="emit('delete')">Delete</button>
       </div>
     </template>

@@ -1086,7 +1086,8 @@ Others:     bring their own feeds and frontends
 - [x] `amagg`: In-island threading, fetching missing parents
 - [x] `amagg`: Feed reader credentials (HTTP Basic), public/private island
 - [x] `amagg`: Feed proxy
-- [ ] `amfront`: Aggregator login, timeline selection, thread view, feed reader passwords
+- [x] `amfront`: Aggregator login, timeline selection, thread view, feed reader passwords, following
+- [x] Local test network (`scripts/dev.sh`, `Makefile`)
 
 ### Phase 3: Interactions
 

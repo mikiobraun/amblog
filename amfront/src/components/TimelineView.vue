@@ -1,17 +1,13 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
-import { fetchAtom, linkHref, type Entry, type Feed } from '../lib/atom'
-import { KeyCache, UnverifiableError } from '../lib/sign'
-import { deleteEntry, ownPostNumber } from '../lib/api'
-import { timelineURL } from '../lib/settings'
+import { onMounted, ref, watch } from 'vue'
+import { linkHref, type Entry } from '../lib/atom'
+import { fetchFeed } from '../lib/agg'
+import { deleteEntry } from '../lib/api'
+import { toItem, verifyItems, type Item } from '../lib/items'
+import { isLoggedIn, settings, timelineURL } from '../lib/settings'
 import ComposeBox from './ComposeBox.vue'
-import EntryCard, { type VerifyStatus } from './EntryCard.vue'
-
-interface Item {
-  entry: Entry
-  verified: VerifyStatus
-  ownSeq: number | null
-}
+import EntryCard from './EntryCard.vue'
+import ThreadView from './ThreadView.vue'
 
 const items = ref<Item[]>([])
 const title = ref('')
@@ -19,42 +15,21 @@ const next = ref('')
 const loading = ref(false)
 const error = ref('')
 const replyTo = ref<Entry | null>(null)
-
-const keys = new KeyCache()
-
-function toItems(feed: Feed): Item[] {
-  return feed.entries.map((entry) => ({
-    entry,
-    verified: { state: 'pending' },
-    ownSeq: ownPostNumber(linkHref(entry.links, 'alternate')),
-  }))
-}
-
-// Verifies in the background; each item's badge updates when done. Mutates
-// through the reactive array so Vue sees the change.
-function verifyAll(start: number) {
-  items.value.slice(start).forEach((item, i) => {
-    keys.verify(item.entry).then(
-      () => (items.value[start + i].verified = { state: 'ok' }),
-      (e: Error) =>
-        (items.value[start + i].verified =
-          e instanceof UnverifiableError
-            ? { state: 'unverifiable', reason: e.message }
-            : { state: 'failed', reason: e.message }),
-    )
-  })
-}
+/** When set, the thread feed shown instead of the timeline. */
+const thread = ref('')
+const threadView = ref<InstanceType<typeof ThreadView> | null>(null)
 
 async function load(url: string, append: boolean) {
   loading.value = true
   error.value = ''
   try {
-    const feed = await fetchAtom(url)
+    const feed = await fetchFeed(url)
     const start = append ? items.value.length : 0
-    items.value = append ? [...items.value, ...toItems(feed)] : toItems(feed)
+    const loaded = feed.entries.map(toItem)
+    items.value = append ? [...items.value, ...loaded] : loaded
     if (!append) title.value = feed.title
     next.value = linkHref(feed.links, 'next')
-    verifyAll(start)
+    verifyItems(items, start)
   } catch (e) {
     error.value = (e as Error).message
   } finally {
@@ -65,7 +40,8 @@ async function load(url: string, append: boolean) {
 function reload() {
   const url = timelineURL()
   if (!url) {
-    error.value = 'No timeline configured. Set a feed server in Settings.'
+    items.value = []
+    error.value = 'No timeline configured. Set a feed server (and an aggregator) in Settings.'
     return
   }
   load(url, false)
@@ -73,7 +49,8 @@ function reload() {
 
 function posted() {
   replyTo.value = null
-  reload()
+  if (thread.value) threadView.value?.reload()
+  else reload()
 }
 
 async function remove(item: Item) {
@@ -87,27 +64,45 @@ async function remove(item: Item) {
   }
 }
 
+watch(() => settings.source, reload)
 onMounted(reload)
 </script>
 
 <template>
   <ComposeBox :reply-to="replyTo" @posted="posted" @cancel-reply="replyTo = null" />
-  <div class="timeline-header">
-    <h2>{{ title || 'Timeline' }}</h2>
-    <button class="link" :disabled="loading" @click="reload">Refresh</button>
-  </div>
-  <p v-if="error" class="error">{{ error }}</p>
-  <EntryCard
-    v-for="item in items"
-    :key="item.entry.id"
-    :entry="item.entry"
-    :verified="item.verified"
-    :own-seq="item.ownSeq"
-    @reply="replyTo = item.entry"
-    @delete="remove(item)"
+  <ThreadView
+    v-if="thread"
+    ref="threadView"
+    :url="thread"
+    @reply="replyTo = $event"
+    @close="thread = ''"
   />
-  <p v-if="!loading && !error && items.length === 0" class="muted">Nothing here yet.</p>
-  <button v-if="next" class="more" :disabled="loading" @click="load(next, true)">
-    {{ loading ? 'Loading…' : 'Load more' }}
-  </button>
+  <template v-else>
+    <div class="timeline-header">
+      <h2>{{ title || 'Timeline' }}</h2>
+      <select v-model="settings.source" aria-label="Timeline">
+        <option value="feed">My feed</option>
+        <option v-if="isLoggedIn()" value="home">Home ({{ settings.aggName }})</option>
+        <option v-if="isLoggedIn()" value="island">Island</option>
+        <option v-if="settings.timeline" value="custom">Custom feed</option>
+      </select>
+      <button class="link" :disabled="loading" @click="reload">Refresh</button>
+    </div>
+    <p v-if="error" class="error">{{ error }}</p>
+    <EntryCard
+      v-for="item in items"
+      :key="item.entry.id"
+      :entry="item.entry"
+      :verified="item.verified"
+      :own-seq="item.ownSeq"
+      :thread-url="item.threadUrl"
+      @reply="replyTo = item.entry"
+      @thread="thread = item.threadUrl"
+      @delete="remove(item)"
+    />
+    <p v-if="!loading && !error && items.length === 0" class="muted">Nothing here yet.</p>
+    <button v-if="next" class="more" :disabled="loading" @click="load(next, true)">
+      {{ loading ? 'Loading…' : 'Load more' }}
+    </button>
+  </template>
 </template>
