@@ -39,7 +39,7 @@ The rest of this document follows from these.
 7. **Islands by default.** An aggregator is its own space with its own rules. Content and conversations cross between islands only through explicit actions.
 8. **Credentials are always explicit.** Bearer tokens, or HTTP Basic for feed readers, never cookies. That keeps `Access-Control-Allow-Origin: *` safe everywhere.
 9. **Simple and explicit over clever.** Uniform rules, fixed formats, loud failures. Unknown config keys, malformed cursors and unsignable content are errors, not guesses.
-10. **Costs land on infrastructure, not people.** Spam control (proof of work) is paid by the servers sending WebMentions, not by users posting.
+10. **Take away the payoff instead of building gates.** Abuse is handled by making it worthless and easy to remove (no link ranking, reach limited to one thread, rate limits, hiding and blocking), not by hurdles that honest senders using plain standards can't pass.
 
 ### Prior Art
 
@@ -69,7 +69,6 @@ The base is existing W3C and IETF standards. On top of that we add a few small e
 - **Entry signing** — Ed25519 signatures over a fixed set of entry fields, for tamper evidence
 - **Token auth** — Simple bearer tokens for posting to your own feed (no OAuth)
 - **Login challenge** — Proving ownership of an identity URL to an aggregator
-- **Proof-of-work challenge** — Spam control on incoming WebMentions
 - **Verbs** — `atomic:verb` for likes and reposts
 - **Per-aggregator feeds** — Contextual identity across aggregators
 
@@ -78,7 +77,7 @@ The base is existing W3C and IETF standards. On top of that we add a few small e
 Interop with other social protocols (ActivityPub, OStatus, AT Protocol) is a non-goal. Interop that does matter:
 
 - **Feed readers** — every feed is a valid Atom feed, readable by any feed reader.
-- **WebMention-enabled blogs** — replies to blog posts are delivered via standard WebMention, and blogs can send WebMentions to us (subject to spam control, see [Spam Control](#spam-control-proof-of-work-challenge)).
+- **WebMention-enabled blogs** — replies to blog posts are delivered via standard WebMention, and blogs can send WebMentions to us (see [Spam Control](#spam-control)).
 
 ### CORS
 
@@ -281,7 +280,7 @@ Returns a feed of replies to the given entry (RFC 4685 reply feed), built from t
 
 #### `POST /webmention`
 
-WebMention endpoint for the feed server's own entries. Advertised via `<link rel="webmention">` on entry pages. Requires a proof-of-work challenge (see [Spam Control](#spam-control-proof-of-work-challenge)).
+WebMention endpoint for the feed server's own entries. Advertised via `<link rel="webmention">` on entry pages. See [Spam Control](#spam-control).
 
 #### `POST /websub`
 
@@ -381,7 +380,7 @@ Other feed servers may advertise any hub; aggregators subscribe to whichever hub
 When an entry has a `thr:in-reply-to` `href`, amfeed sends a WebMention with `source` set to the entry's permalink and `target` set to that `href`, to the endpoint discovered at the target (HTTP `Link` header or `<link rel="webmention">`). Likes and reposts do the same with their target. When the entry is edited or deleted, amfeed sends it again, so the receiver re-fetches the source.
 
 - Sending happens in the background after the API call returns; failures are retried a few times, then dropped.
-- If the receiver asks for proof of work, amfeed solves it.
+- On `429 Too Many Requests`, amfeed retries after `Retry-After`.
 - A reply made from an aggregator's timeline points at that aggregator's post page, so the aggregator receives the reply at once. A reply to a plain blog reaches the blog directly, with no aggregator involved.
 - Aggregators that ingest the reply still forward it to the source (see [Conversations and Replies](#conversations-and-replies)). WebMention is idempotent per source and target, so the duplicate is harmless.
 
@@ -673,43 +672,17 @@ If Bob had replied to Alice's original URL instead, the reply would go to Alice'
 
 An aggregator's timeline is an Atom feed, so island B can subscribe to island A. B removes duplicates by entry `id` and verifies signatures against the `author` key, independent of which feed the entry arrived through. B sets its own `alternate` and points `via` at A. Replies on B then forward along the `via` chain: B → A → Alice.
 
-#### Spam Control: Proof-of-Work Challenge
+#### Spam Control
 
-WebMention endpoints are open by default, making them spam targets. Both amfeed and amagg protect their endpoints with a proof-of-work challenge using HTTP's standard challenge/response mechanism.
+WebMention endpoints (amfeed and amagg) accept any standard WebMention; senders need nothing beyond the WebMention spec. Spam is kept down by giving it little to gain and by plain limits:
 
-**1. First request, without proof:**
-
-```
-POST /webmention HTTP/1.1
-Content-Type: application/x-www-form-urlencoded
-
-source=https://bob.example/posts/7&target=https://agg-a.example/posts/abc123
-```
-
-```
-HTTP/1.1 401 Unauthorized
-WWW-Authenticate: PoW challenge="<base64>", difficulty=20
-```
-
-**2. Retry with solution:**
-
-```
-POST /webmention HTTP/1.1
-Authorization: PoW challenge="<base64>", nonce="<hex>"
-Content-Type: application/x-www-form-urlencoded
-
-source=https://bob.example/posts/7&target=https://agg-a.example/posts/abc123
-```
-
-The solution is valid if `SHA-256(challenge || nonce)` has at least `difficulty` leading zero bits.
-
-- **Stateless challenge:** the challenge encodes an expiry, a random value, and an HMAC (with a server secret) over expiry, random value, source and target. The server stores nothing until a solution arrives, and a challenge only works for the mention it was issued for.
-- **Single-use:** the server remembers used challenges until they expire and rejects reuse. One solution buys exactly one WebMention.
-- **Waived for subscribed sites:** an aggregator skips the challenge when the `source` lies under a site it already subscribes to: a member's author URI, or the site (`alternate`) URL of a followed feed. This lets plain blogs that a member follows reply without solving anything.
+- **Source check:** as WebMention requires, the receiver fetches the `source` and accepts it only if it links to the `target`. Each mention needs a real page.
+- **No link payoff:** links inside replies are rendered with `rel="nofollow ugc"`, so they carry no search ranking.
+- **Little reach:** a reply shows only in the thread it was sent to, on one island or one feed server.
+- **Rate limit per sending host:** over the limit, the endpoint answers `429 Too Many Requests` with `Retry-After`.
+- **Blocklist:** the operator can block sending hosts.
 
 Whatever gets through is ingested like any other entry: verified if it can be, otherwise shown as unverified with where it came from.
-
-The sender is a server (an aggregator forwarding a reply, or a feed server), so the cost lands on infrastructure, not on users. Cheap for one-off mentions, expensive for bulk spam.
 
 ### API
 
@@ -747,7 +720,7 @@ List followed feeds for the authenticated user.
 
 #### `POST /webmention`
 
-WebMention endpoint. Accepts incoming mentions with proof-of-work challenge.
+WebMention endpoint. See [Spam Control](#spam-control).
 
 #### `GET /api/mentions/{entry-id}`
 
@@ -995,8 +968,8 @@ min_interval = "1m"
 max_interval = "1h"
 
 [webmention]
-pow_difficulty = 20       # leading zero bits required
-challenge_ttl = "10m"
+per_host_per_hour = 30    # incoming mentions per sending host, then 429
+block_hosts = []          # sending hosts whose mentions are rejected
 
 [storage]
 path = "amagg.db"
@@ -1106,9 +1079,9 @@ Others:     bring their own feeds and frontends
 ### Phase 3: Interactions
 
 - [ ] `amfeed` + `amagg`: WebMention endpoint (incoming), reply feeds
-- [ ] `amfeed`: Sending WebMentions for replies (with proof of work)
+- [ ] `amfeed`: Sending WebMentions for replies
 - [ ] `amagg`: WebMention forwarding to source
-- [ ] `amfeed` + `amagg`: Proof-of-work challenge (issue, verify, single-use), waived for subscribed sites
+- [ ] `amfeed` + `amagg`: Spam control (source check, `nofollow ugc`, per-host rate limit, host blocklist)
 - [ ] `amfront`: Like/repost actions
 - [ ] `amagg`: Islands consuming islands
 

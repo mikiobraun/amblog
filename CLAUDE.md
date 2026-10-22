@@ -10,7 +10,7 @@ Atomic Micro Blogging: a decentralized social network built from existing web st
 - **am** (Go CLI): config, post, reply, ls, rm, token create, show (with signature verification); login, follow, unfollow, following, timeline (aggregator).
 - **amfront** (Vue): timeline (my feed / home / island / custom), compose/reply/delete, thread view, aggregator login (challenge flow), following, feed reader passwords, in-browser signature verification.
 - **amagg** (Go): roadmap Phase 2 done — challenge login with invites, follows, polling/ingest with verification and the replacement rule, island + member timelines, re-served entries, threads + missing parents, post pages, OPML export, feed reader Basic auth, public/private, feed proxy.
-- Not yet built: WebMention, proof-of-work, WebSub, `replies.atom`, likes/reposts UI, shared following lists, media, moderation.
+- Not yet built: WebMention (incl. spam control), WebSub, `replies.atom`, likes/reposts UI, shared following lists, media, moderation.
 
 ## Layout
 
