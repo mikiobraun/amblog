@@ -57,9 +57,9 @@ amfront/scripts/gen-fixtures.sh
 caddy validate --config site/Caddyfile --adapter caddyfile
 ```
 
-Local end-to-end: `./amfeed init -dir data -base-url http://localhost:8100 -name Test`, `./amfeed serve -config data/amfeed.toml`, `./am config -feed http://localhost:8100 -token <admin token>`. `data/` is gitignored.
+The `Makefile` wraps the common ones: `make build`, `make test`, `make check` (gofmt, vet, Go + amfront tests, typecheck), `make fixtures`, `make front`.
 
-With an aggregator: `./amagg init -dir data/agg -base-url http://localhost:8200 -name Test`, `./amagg serve -config data/agg/amagg.toml`, `./am login -invite $(./amagg invite -config data/agg/amagg.toml) http://localhost:8200`, then `./am follow URL`, `./am timeline`. Login needs HTTPS identity URLs except on loopback hosts.
+**Local test network:** `scripts/dev.sh` (or `make dev` / `dev-start` / `dev-stop` / `dev-reset`). `setup` builds, creates alice, bob, carol (amfeed on :9100–9102) and "Dev Island" (amagg on :9200) in `data/dev`, starts them, posts, logs alice and bob in, and has alice follow carol. `scripts/dev.sh am alice timeline` runs `am` as someone; `scripts/dev.sh info` prints URLs and tokens for amfront. The 9xxx ports keep it clear of the user's own servers on 8100/8200 (their personal amfeed lives in `data/` — don't touch it). Login needs HTTPS identity URLs except on loopback hosts.
 
 ## Design principles
 
