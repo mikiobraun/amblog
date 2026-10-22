@@ -4,6 +4,7 @@ import { linkHref, type Entry } from '../lib/atom'
 import { fetchFeed } from '../lib/agg'
 import { deleteEntry } from '../lib/api'
 import { toItem, verifyItems, type Item } from '../lib/items'
+import { go, route } from '../lib/route'
 import { isLoggedIn, settings, timelineURL } from '../lib/settings'
 import ComposeBox from './ComposeBox.vue'
 import EntryCard from './EntryCard.vue'
@@ -15,8 +16,6 @@ const next = ref('')
 const loading = ref(false)
 const error = ref('')
 const replyTo = ref<Entry | null>(null)
-/** When set, the thread feed shown instead of the timeline. */
-const thread = ref('')
 const threadView = ref<InstanceType<typeof ThreadView> | null>(null)
 
 async function load(url: string, append: boolean) {
@@ -49,7 +48,7 @@ function reload() {
 
 function posted() {
   replyTo.value = null
-  if (thread.value) threadView.value?.reload()
+  if (route.thread) threadView.value?.reload()
   else reload()
 }
 
@@ -71,11 +70,11 @@ onMounted(reload)
 <template>
   <ComposeBox :reply-to="replyTo" @posted="posted" @cancel-reply="replyTo = null" />
   <ThreadView
-    v-if="thread"
+    v-if="route.thread"
     ref="threadView"
-    :url="thread"
+    :url="route.thread"
     @reply="replyTo = $event"
-    @close="thread = ''"
+    @close="go('timeline')"
   />
   <template v-else>
     <div class="timeline-header">
@@ -97,7 +96,7 @@ onMounted(reload)
       :own-seq="item.ownSeq"
       :thread-url="item.threadUrl"
       @reply="replyTo = item.entry"
-      @thread="thread = item.threadUrl"
+      @thread="go('timeline', item.threadUrl)"
       @delete="remove(item)"
     />
     <p v-if="!loading && !error && items.length === 0" class="muted">Nothing here yet.</p>
