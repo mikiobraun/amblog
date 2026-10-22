@@ -152,7 +152,7 @@ The feed server is the simplest component. It stores your posts and serves them 
 2. Accept new entries via authenticated API
 3. Serve individual entry permalinks
 4. Publish signing keys
-5. Receive WebMentions for its entries and serve them as reply feeds
+5. Receive WebMentions for its entries and serve them as reply feeds, moderated by the owner
 6. Send WebMentions for its own replies
 7. Act as the WebSub hub for its feed, pushing updates to subscribed aggregators
 8. Publish login challenges, so the owner can prove ownership of the identity to aggregators
@@ -285,6 +285,10 @@ WebMention endpoint for the feed server's own entries. Advertised via `<link rel
 #### `POST /websub`
 
 WebSub hub for the feed (see [WebSub](#websub)). Advertised via `<link rel="hub">` in the feed.
+
+#### `GET /api/moderation?id={entry-id}` / `POST /api/moderation`
+
+Moderating replies to the owner's entries in `replies.atom`. Token-authenticated. Same API as the aggregator's (see [Moderation](#moderation-v0)).
 
 #### `POST /api/entries`
 
@@ -682,7 +686,47 @@ WebMention endpoints (amfeed and amagg) accept any standard WebMention; senders 
 - **Rate limit per sending host:** over the limit, the endpoint answers `429 Too Many Requests` with `Retry-After`.
 - **Blocklist:** the operator can block sending hosts.
 
-Whatever gets through is ingested like any other entry: verified if it can be, otherwise shown as unverified with where it came from.
+Whatever gets through is ingested like any other entry: verified if it can be, otherwise shown as unverified with where it came from. Unwanted entries can then be moderated (see [Moderation](#moderation-v0)).
+
+### Moderation (v0)
+
+You can't control what others write about you, but you can choose what shows in the spaces you're part of. On an island, what members may moderate is the island's policy: one island offers nothing, another lets authors hide what's posted under their posts.
+
+**Actions.** There are three, with fixed meanings, so every frontend and feed consumer can display them:
+
+| Action | Effect |
+|---|---|
+| `fold` | The entry stays, marked sensitive. Frontends collapse it behind a "show" toggle. |
+| `hide` | The entry is served as a tombstone: same `id`, content and title removed, marked as hidden. Replies to it stay. |
+| `prune` | The entry and everything below it in the thread are left out of timelines and threads. |
+
+Nothing is deleted: moderated entries stay in storage, and the action `none` undoes any of them.
+
+**Who may do what.** The island decides, per caller and entry. Typical rules: the operator may do anything; a member may moderate entries below their own verified posts (direct replies only, or the whole subtree); nobody else may do anything. A frontend doesn't need to know the rules: it asks which actions are available and offers those.
+
+```
+GET /api/moderation?id=tag:bob.example,2026-10:post-7
+Authorization: Bearer <aggregator-token>
+
+{"actions": ["fold", "hide", "prune"], "current": null}
+```
+
+```
+POST /api/moderation
+Authorization: Bearer <aggregator-token>
+
+{"id": "tag:bob.example,2026-10:post-7", "action": "hide"}
+```
+
+**In feeds.** Folded and hidden entries carry an unsigned marker, like the other metadata the aggregator adds (see [Re-served Entries](#re-served-entries)):
+
+```xml
+<atomic:moderation action="hide" by="author"/>
+```
+
+`by` is `author` (the author of a post above the entry) or `operator`. A hidden entry can't verify, since its content is gone; frontends show "hidden by the author" for it, not a signature failure. Pruned entries are simply absent.
+
+**On a feed server.** amfeed implements the same API for replies to its own entries, as shown in `replies.atom`. Only the owner moderates there, with no restrictions: it's their space.
 
 ### API
 
@@ -725,6 +769,10 @@ WebMention endpoint. See [Spam Control](#spam-control).
 #### `GET /api/mentions/{entry-id}`
 
 List WebMentions received for a specific entry.
+
+#### `GET /api/moderation?id={entry-id}` / `POST /api/moderation`
+
+Moderation actions available to the caller for an entry, and applying one (see [Moderation](#moderation-v0)).
 
 #### `GET /api/feed?url={feed-url}`
 
@@ -1093,7 +1141,7 @@ Others:     bring their own feeds and frontends
 
 ### Phase 5: Polish
 
-- [ ] `amagg`: Moderation tools
+- [ ] `amagg` + `amfeed` + `amfront`: Moderation v0 (`fold`, `hide`, `prune`; island policy; markers in feeds)
 - [ ] `amagg` + `amfeed` + `amfront`: Follow graph export/import, shared following lists
 - [ ] `amfront`: Multi-aggregator support
 - [ ] `amfront`: Media upload flow
