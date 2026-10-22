@@ -46,6 +46,14 @@ var schema = []string{
 		user_id INTEGER NOT NULL REFERENCES users (id),
 		created TEXT NOT NULL
 	)`,
+	// Feed reader credentials: HTTP Basic passwords, one per reader.
+	`CREATE TABLE IF NOT EXISTS readers (
+		id      INTEGER PRIMARY KEY,
+		user_id INTEGER NOT NULL REFERENCES users (id),
+		name    TEXT NOT NULL,
+		hash    TEXT NOT NULL UNIQUE,
+		created TEXT NOT NULL
+	)`,
 	`CREATE TABLE IF NOT EXISTS invites (
 		hash    TEXT PRIMARY KEY,
 		created TEXT NOT NULL,
@@ -262,6 +270,60 @@ func (s *Store) CreateToken(hash string, userID int64) error {
 func (s *Store) UserByToken(hash string) (*User, error) {
 	return scanUser(s.db.QueryRow(`SELECT `+prefixed("u.", userColumns)+` FROM users u
 		JOIN tokens t ON t.user_id = u.id WHERE t.hash = ?`, hash))
+}
+
+type Reader struct {
+	ID      int64  `json:"id"`
+	Name    string `json:"name"`
+	Created string `json:"created"`
+}
+
+func (s *Store) CreateReader(userID int64, name, hash string) (*Reader, error) {
+	created := nowString()
+	res, err := s.db.Exec(`INSERT INTO readers (user_id, name, hash, created) VALUES (?, ?, ?, ?)`,
+		userID, name, hash, created)
+	if err != nil {
+		return nil, err
+	}
+	id, err := res.LastInsertId()
+	return &Reader{ID: id, Name: name, Created: created}, err
+}
+
+func (s *Store) Readers(userID int64) ([]*Reader, error) {
+	rows, err := s.db.Query(`SELECT id, name, created FROM readers WHERE user_id = ? ORDER BY id`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	readers := []*Reader{}
+	for rows.Next() {
+		var r Reader
+		if err := rows.Scan(&r.ID, &r.Name, &r.Created); err != nil {
+			return nil, err
+		}
+		readers = append(readers, &r)
+	}
+	return readers, rows.Err()
+}
+
+// DeleteReader revokes a reader credential; ErrNotFound if the user has none
+// with that id.
+func (s *Store) DeleteReader(userID, id int64) error {
+	res, err := s.db.Exec(`DELETE FROM readers WHERE user_id = ? AND id = ?`, userID, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// UserByReader returns the user with the given name whose reader password
+// hashes to hash, or ErrNotFound.
+func (s *Store) UserByReader(name, hash string) (*User, error) {
+	return scanUser(s.db.QueryRow(`SELECT `+prefixed("u.", userColumns)+` FROM users u
+		JOIN readers r ON r.user_id = u.id WHERE u.name = ? AND r.hash = ?`, name, hash))
 }
 
 // --- follows ---

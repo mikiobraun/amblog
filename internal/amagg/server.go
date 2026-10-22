@@ -22,6 +22,7 @@ type Server struct {
 	client  *http.Client
 	keys    *sign.KeyCache
 	origin  string // scheme://host of the base URL, bound into login challenges
+	basicOK bool   // HTTP Basic allowed: base URL is https, or on a loopback host
 	now     func() time.Time
 	handler http.Handler
 
@@ -36,13 +37,14 @@ func NewServer(cfg *Config, store *Store) (*Server, error) {
 	}
 	client := &http.Client{Timeout: 20 * time.Second}
 	s := &Server{
-		cfg:    cfg,
-		store:  store,
-		client: client,
-		keys:   sign.NewKeyCache(client),
-		origin: u.Scheme + "://" + u.Host,
-		now:    time.Now,
-		logins: map[string]pendingLogin{},
+		cfg:     cfg,
+		store:   store,
+		client:  client,
+		keys:    sign.NewKeyCache(client),
+		origin:  u.Scheme + "://" + u.Host,
+		basicOK: u.Scheme == "https" || isLoopback(u.Hostname()),
+		now:     time.Now,
+		logins:  map[string]pendingLogin{},
 	}
 
 	mux := http.NewServeMux()
@@ -57,6 +59,9 @@ func NewServer(cfg *Config, store *Store) (*Server, error) {
 	mux.HandleFunc("DELETE /api/follow", s.requireUser(s.handleUnfollow))
 	mux.HandleFunc("GET /api/following", s.requireUser(s.handleFollowing))
 	mux.HandleFunc("GET /api/following/export", s.requireUser(s.handleFollowingExport))
+	mux.HandleFunc("POST /api/readers", s.requireUser(s.handleCreateReader))
+	mux.HandleFunc("GET /api/readers", s.requireUser(s.handleListReaders))
+	mux.HandleFunc("DELETE /api/readers/{id}", s.requireUser(s.handleDeleteReader))
 	s.handler = web.CORS(mux, "GET, POST, DELETE, OPTIONS")
 	return s, nil
 }
@@ -81,30 +86,53 @@ func userName(authorURI string) string {
 	return strings.NewReplacer("/", "_", ":", "_").Replace(u.Host + strings.TrimSuffix(u.Path, "/"))
 }
 
-var errNoCredentials = errors.New("no credentials")
+var (
+	errNoCredentials = errors.New("member credentials required")
+	errBasicNotFeed  = errors.New("HTTP Basic credentials are only accepted on feeds")
+	errBasicInsecure = errors.New("HTTP Basic credentials need an https aggregator")
+)
 
-// authUser returns the member a request authenticates as.
-func (s *Server) authUser(r *http.Request) (*User, error) {
-	token, ok := web.BearerToken(r)
-	if !ok {
-		return nil, errNoCredentials
+// authUser returns the member a request authenticates as: by bearer token,
+// or, on feeds (feed = true), by a feed reader's HTTP Basic password.
+func (s *Server) authUser(r *http.Request, feed bool) (*User, error) {
+	if token, ok := web.BearerToken(r); ok {
+		return s.store.UserByToken(web.HashToken(token))
 	}
-	return s.store.UserByToken(web.HashToken(token))
+	if name, password, ok := r.BasicAuth(); ok {
+		if !feed {
+			return nil, errBasicNotFeed
+		}
+		if !s.basicOK {
+			return nil, errBasicInsecure
+		}
+		return s.store.UserByReader(name, web.HashToken(password))
+	}
+	return nil, errNoCredentials
 }
 
-// checkUser writes a 401 (or 500) and returns nil if the request doesn't
-// authenticate as a member.
-func (s *Server) checkUser(w http.ResponseWriter, r *http.Request) *User {
-	u, err := s.authUser(r)
-	switch {
-	case err == nil:
+// checkUser writes a 401 (or 403, 500) and returns nil if the request doesn't
+// authenticate as a member. feed: the request is for a feed, where feed
+// readers may use HTTP Basic.
+func (s *Server) checkUser(w http.ResponseWriter, r *http.Request, feed bool) *User {
+	u, err := s.authUser(r, feed)
+	if err == nil {
 		return u
-	case errors.Is(err, errNoCredentials):
-		w.Header().Set("WWW-Authenticate", "Bearer")
-		web.WriteError(w, http.StatusUnauthorized, "member credentials required")
+	}
+	challenge := func() {
+		w.Header().Add("WWW-Authenticate", "Bearer")
+		if feed && s.basicOK {
+			w.Header().Add("WWW-Authenticate", `Basic realm="`+s.cfg.Aggregator.Name+`"`)
+		}
+	}
+	switch {
+	case errors.Is(err, errNoCredentials), errors.Is(err, errBasicNotFeed):
+		challenge()
+		web.WriteError(w, http.StatusUnauthorized, err.Error())
 	case errors.Is(err, ErrNotFound):
-		w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)
-		web.WriteError(w, http.StatusUnauthorized, "invalid token")
+		challenge()
+		web.WriteError(w, http.StatusUnauthorized, "invalid credentials")
+	case errors.Is(err, errBasicInsecure):
+		web.WriteError(w, http.StatusForbidden, err.Error())
 	default:
 		web.ServerError(w, err)
 	}
@@ -113,7 +141,7 @@ func (s *Server) checkUser(w http.ResponseWriter, r *http.Request) *User {
 
 func (s *Server) requireUser(h func(http.ResponseWriter, *http.Request, *User)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if u := s.checkUser(w, r); u != nil {
+		if u := s.checkUser(w, r, false); u != nil {
 			h(w, r, u)
 		}
 	}
@@ -121,6 +149,6 @@ func (s *Server) requireUser(h func(http.ResponseWriter, *http.Request, *User)) 
 
 // checkPublic lets the request through on a public island, and otherwise
 // requires member credentials. It reports whether to continue.
-func (s *Server) checkPublic(w http.ResponseWriter, r *http.Request) bool {
-	return s.cfg.Aggregator.Public || s.checkUser(w, r) != nil
+func (s *Server) checkPublic(w http.ResponseWriter, r *http.Request, feed bool) bool {
+	return s.cfg.Aggregator.Public || s.checkUser(w, r, feed) != nil
 }

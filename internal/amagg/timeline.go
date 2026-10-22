@@ -23,7 +23,7 @@ const (
 
 // handleIslandTimeline serves entries from all members' feeds.
 func (s *Server) handleIslandTimeline(w http.ResponseWriter, r *http.Request) {
-	if !s.checkPublic(w, r) {
+	if !s.checkPublic(w, r, true) {
 		return
 	}
 	s.serveTimeline(w, r, 0, s.cfg.Aggregator.BaseURL+"/timeline.atom", s.cfg.Aggregator.Name)
@@ -37,7 +37,7 @@ func (s *Server) handleUserTimeline(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	u := s.checkUser(w, r)
+	u := s.checkUser(w, r, true)
 	if u == nil {
 		return
 	}
@@ -176,7 +176,7 @@ func (s *Server) entryFromPath(w http.ResponseWriter, r *http.Request) (*Entry, 
 // handlePost serves one entry: Atom if asked for, otherwise an HTML page
 // showing it within its thread.
 func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
-	if !s.checkPublic(w, r) {
+	if !s.checkPublic(w, r, false) {
 		return
 	}
 	e, ok := s.entryFromPath(w, r)

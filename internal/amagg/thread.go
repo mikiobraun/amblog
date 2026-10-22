@@ -72,7 +72,7 @@ func (s *Server) thread(e *Entry) ([]threadItem, error) {
 // handleThread serves the whole conversation around a post as an Atom feed,
 // in conversation order.
 func (s *Server) handleThread(w http.ResponseWriter, r *http.Request) {
-	if !s.checkPublic(w, r) {
+	if !s.checkPublic(w, r, true) {
 		return
 	}
 	e, ok := s.entryFromPath(w, r)

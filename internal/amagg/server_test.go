@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -495,6 +496,66 @@ func TestThreads(t *testing.T) {
 	resp, body := request(t, "GET", rootAlt, "", "")
 	if resp.StatusCode != 200 || !strings.Contains(body, "alice answers bob") {
 		t.Errorf("post page: %d %s", resp.StatusCode, body)
+	}
+}
+
+func TestFeedReaders(t *testing.T) {
+	agg := startAgg(t, func(c *Config) { c.Aggregator.Public = false })
+	alice := startFeed(t, "Alice")
+	session := agg.login(alice, agg.invite())
+
+	resp, body := request(t, "POST", agg.url+"/api/readers", session.Token, `{"name":"NetNewsWire"}`)
+	if resp.StatusCode != 201 {
+		t.Fatalf("create reader: %d %s", resp.StatusCode, body)
+	}
+	var cred struct {
+		ID       int64
+		Username string
+		Password string
+	}
+	json.Unmarshal([]byte(body), &cred)
+	if cred.Username != session.Name || !strings.HasPrefix(cred.Password, "amr_") {
+		t.Fatalf("credential = %+v", cred)
+	}
+
+	basic := func(path, password string) int {
+		req, _ := http.NewRequest("GET", agg.url+path, nil)
+		req.SetBasicAuth(cred.Username, password)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	timeline := "/timeline/" + session.Name + ".atom"
+	if got := basic(timeline, cred.Password); got != 200 {
+		t.Errorf("member timeline with reader password: %d", got)
+	}
+	if got := basic("/timeline.atom", cred.Password); got != 200 {
+		t.Errorf("private island timeline with reader password: %d", got)
+	}
+	if got := basic(timeline, "amr_wrong"); got != 401 {
+		t.Errorf("wrong password: %d", got)
+	}
+	if got := basic("/api/following", cred.Password); got != 401 {
+		t.Errorf("reader password on the API: %d", got)
+	}
+	resp, _ = request(t, "GET", agg.url+timeline, "", "")
+	if h := resp.Header.Values("WWW-Authenticate"); len(h) != 2 || !strings.HasPrefix(h[1], "Basic") {
+		t.Errorf("WWW-Authenticate = %q", h)
+	}
+
+	resp, body = request(t, "GET", agg.url+"/api/readers", session.Token, "")
+	if resp.StatusCode != 200 || !strings.Contains(body, "NetNewsWire") || strings.Contains(body, "amr_") {
+		t.Errorf("list readers: %d %s", resp.StatusCode, body)
+	}
+	resp, _ = request(t, "DELETE", agg.url+"/api/readers/"+strconv.FormatInt(cred.ID, 10), session.Token, "")
+	if resp.StatusCode != 204 {
+		t.Fatalf("revoke: %d", resp.StatusCode)
+	}
+	if got := basic(timeline, cred.Password); got != 401 {
+		t.Errorf("revoked password: %d", got)
 	}
 }
 

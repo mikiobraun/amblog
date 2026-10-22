@@ -503,7 +503,7 @@ The posting token never leaves the client, and amfeed never signs anything on an
 Members have no passwords; the login flow above is the only way to prove who you are. What it yields are tokens, used in two ways:
 
 - **Bearer tokens** for amfront and other clients (`Authorization: Bearer …`), as everywhere else.
-- **Feed reader credentials** for plain feed readers, which can't run the login flow or send custom headers but do support HTTP Basic auth. A member creates one per reader in amfront (`POST /api/readers`, bearer-authenticated); the aggregator generates a random password and shows it once. The reader then uses `https://capyclub.example/timeline/miki.atom` with username `miki` and that password. Basic auth is accepted only over HTTPS (loopback excepted), only on feeds (`GET *.atom`), and the passwords are stored hashed and revocable, like tokens.
+- **Feed reader credentials** for plain feed readers, which can't run the login flow or send custom headers but do support HTTP Basic auth. A member creates one per reader in amfront (`POST /api/readers`, bearer-authenticated); the aggregator generates a random password and shows it once. The reader then uses `https://capyclub.example/timeline/miki.atom` with username `miki` (the member name) and that password. Basic auth is accepted only on aggregators served over HTTPS (loopback excepted), only on feeds (`*.atom`), and the passwords are stored hashed and revocable, like tokens. Feeds that need credentials answer `401` with both a `Bearer` and a `Basic` challenge.
 
 Basic auth doesn't weaken the CORS rule: browsers attach cached Basic credentials to cross-origin requests only with `credentials: "include"`, which `Access-Control-Allow-Origin: *` forbids. The aggregator never sends `Access-Control-Allow-Credentials`.
 
@@ -709,7 +709,7 @@ Request a login challenge for an author URI, then have it checked; returns a ses
 
 Follow or unfollow a feed.
 
-#### `POST /api/readers` / `DELETE /api/readers/{id}`
+#### `POST /api/readers` / `GET /api/readers` / `DELETE /api/readers/{id}`
 
 Create or revoke a feed reader credential (HTTP Basic password) for the authenticated member; see [Authentication and Access](#authentication-and-access).
 
@@ -1084,7 +1084,7 @@ Others:     bring their own feeds and frontends
 - [x] `amagg`: Island and member timelines, re-served entries (`alternate`, `via`, `atom:source`), post pages
 - [x] `am`: login, follow, unfollow, following, timeline
 - [x] `amagg`: In-island threading, fetching missing parents
-- [ ] `amagg`: Feed reader credentials (HTTP Basic), public/private island
+- [x] `amagg`: Feed reader credentials (HTTP Basic), public/private island
 - [ ] `amagg`: Feed proxy
 - [ ] `amfront`: Aggregator login, timeline selection, thread view, feed reader passwords
 
