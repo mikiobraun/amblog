@@ -1,6 +1,6 @@
 # Common tasks. The local test network is scripts/dev.sh; see its header.
 
-.PHONY: build test check fixtures front dev dev-start dev-stop dev-reset
+.PHONY: build test check fixtures front dev dev-start dev-air dev-stop dev-reset
 
 build:
 	go build -o . ./cmd/...
@@ -30,6 +30,10 @@ dev:
 
 dev-start:
 	scripts/dev.sh start
+
+# Rebuild and restart the dev network on every Go change (air: go install github.com/air-verse/air@latest).
+dev-air:
+	air
 
 dev-stop:
 	scripts/dev.sh stop

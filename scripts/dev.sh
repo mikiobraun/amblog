@@ -18,6 +18,7 @@
 #
 # Usage: scripts/dev.sh setup     build, create, start, log alice and bob in, post a little
 #        scripts/dev.sh start     start the servers (after a stop)
+#        scripts/dev.sh run       run the servers in the foreground (used by air, see .air.toml)
 #        scripts/dev.sh stop      stop the servers
 #        scripts/dev.sh status    show which servers run
 #        scripts/dev.sh reset     stop and delete data/dev
@@ -76,6 +77,31 @@ start() {
 	for f in "${FEEDS[@]}"; do wait_for "${f##*:}"; done
 	wait_for $AGG_PORT
 	status
+}
+
+# run starts the servers in the foreground and stops them when it is
+# interrupted (air restarts it this way after a rebuild). Output goes to the
+# terminal, prefixed with the name, and to the logs.
+run() {
+	[[ -d $DEV ]] || { echo "no dev setup; run: scripts/dev.sh setup" >&2; exit 1; }
+	stop
+	mkdir -p "$DEV/pids" "$DEV/logs"
+	trap 'stop; exit 0' INT TERM
+	for f in "${FEEDS[@]}"; do
+		run_one "${f%%:*}" "$ROOT/amfeed" serve -config "$DEV/${f%%:*}/amfeed.toml"
+	done
+	run_one agg "$ROOT/amagg" serve -config "$DEV/agg/amagg.toml"
+	for f in "${FEEDS[@]}"; do wait_for "${f##*:}"; done
+	wait_for $AGG_PORT
+	echo "dev network up"
+	wait
+}
+
+run_one() { # name, command...
+	local name=$1
+	shift
+	"$@" > >(tee -a "$DEV/logs/$name.log" | sed -u "s/^/[$name] /") 2>&1 &
+	echo $! >"$DEV/pids/$name"
 }
 
 stop() {
@@ -148,6 +174,7 @@ info() {
 case ${1:-} in
 setup) setup ;;
 start) start ;;
+run) run ;;
 stop) stop ;;
 status) status ;;
 reset) stop; rm -rf "$DEV" ;;
@@ -158,7 +185,7 @@ am)
 	am_as "${@:2}"
 	;;
 *)
-	sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'
+	sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'
 	exit 2
 	;;
 esac

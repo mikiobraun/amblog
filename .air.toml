@@ -1,0 +1,19 @@
+# Live reload for the local test network: `make dev-air` (after `make dev`).
+# On every Go change, air rebuilds amfeed, amagg and am and restarts all four
+# servers (scripts/dev.sh run). amfront has its own reload (`make front`).
+root = "."
+tmp_dir = "data/air"
+
+[build]
+  cmd = "go build -o . ./cmd/..."
+  entrypoint = ["scripts/dev.sh", "run"]
+  include_ext = ["go"]
+  exclude_dir = ["amfront", "data", "site", "scripts"]
+  exclude_regex = ["_test\\.go$"]
+  delay = 500
+  send_interrupt = true
+  kill_delay = "2s"
+  log = "build-errors.log"
+
+[misc]
+  clean_on_exit = true
