@@ -6,7 +6,22 @@
 <title>Atomic Micro Blogging</title>
 <meta name="description" content="A decentralized social network built from existing web standards: publishing, aggregation and presentation, each independently swappable.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='-12 -12 24 24'><g fill='none' stroke='%23d0562b' stroke-width='1.4'><ellipse rx='10' ry='3.6'/><ellipse rx='10' ry='3.6' transform='rotate(60)'/><ellipse rx='10' ry='3.6' transform='rotate(-60)'/></g><circle r='2.2' fill='%23d0562b'/></svg>">
+<link rel="preload" href="fonts/bowlby-one-sc-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/jost-latin.woff2" as="font" type="font/woff2" crossorigin>
 <style>
+  /* Both under the SIL Open Font License, see fonts/OFL-*.txt. Latin subset. */
+  @font-face {
+    font-family: "Bowlby One SC";
+    src: url(fonts/bowlby-one-sc-latin.woff2) format("woff2");
+    font-weight: 400;
+    font-display: swap;
+  }
+  @font-face {
+    font-family: "Jost";
+    src: url(fonts/jost-latin.woff2) format("woff2");
+    font-weight: 400 700;
+    font-display: swap;
+  }
   :root {
     --bg: #f6efe2;
     --fg: #1f2a33;
@@ -32,7 +47,7 @@
     margin: 0;
     background: var(--bg);
     color: var(--fg);
-    font: 17px/1.6 "Futura", "Century Gothic", "Avenir Next", system-ui, sans-serif;
+    font: 17px/1.6 "Jost", "Futura", "Century Gothic", system-ui, sans-serif;
   }
   main {
     max-width: 44rem;
@@ -46,11 +61,15 @@
     border-radius: 14px;
     margin: 0 0 2.5rem;
   }
+  h1, .part h2 {
+    font-family: "Bowlby One SC", "Futura", system-ui, sans-serif;
+    font-weight: 400;
+  }
   h1 {
     text-align: center;
     font-size: clamp(2rem, 6vw, 3rem);
     line-height: 1.1;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.02em;
     text-transform: uppercase;
     margin: 0;
   }
