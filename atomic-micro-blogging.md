@@ -1094,6 +1094,12 @@ Others:     bring their own feeds and frontends
 - **Likes in feed readers** — Likes and reposts are entries, so they show up as near-empty items in plain feed readers. Should they live in a separate feed?
 - **Hosting for people without servers** — amfeed is single-author. A separate multi-tenant host (working name *amhost*) would serve identities like `https://amhost.example/mikio/` (the protocol supports identities with a path). Open: account management (possibly a `forward_auth` proxy passing trusted user headers to a localhost-bound backend), and whether the host holds signing keys (custodial) or users bring their own.
 
+- **Posting from other sites** — A site that isn't your client (e.g. a blog's comment box) can't post to your feed today: you reply from your own client, or the site links to it with the reply prefilled. Two ways to reply without leaving the site; your entries stay on your feed server and are signed there in both:
+  - **Embedded compose box:** you enter your identity URL on the site; the site discovers your compose page from your profile (a rel link) and embeds it in an iframe, passing only `in-reply-to`. You log in and post inside the iframe, which belongs to your feed server; it reports its height and the posted URL to the site via `postMessage`. The site never holds a token. Open: browsers partition iframe storage per embedding site, so you log in once per site (passkeys work in cross-origin iframes); clickjacking, since the compose page must be embeddable everywhere (text typed only inside the iframe, the reply target shown, a real click to post).
+  - **[IndieAuth](https://indieauth.spec.indieweb.org/):** you approve the site at your own feed server, and it gets a narrow token (replies only, possibly only to that site, expiring) to post to your feed from its own UI. IndieAuth also proves ownership of an identity URL, so it could stand in for the aggregator login challenge.
+
+  Both need a browser login for the owner at amfeed, which it doesn't have.
+
 ### Out of Scope
 
 - **Direct messages.**
@@ -1139,6 +1145,7 @@ Others:     bring their own feeds and frontends
 - [x] `amfeed`: Its own WebSub hub (subscriptions, intent verification, push on create/edit/delete)
 - [x] `amagg`: WebSub subscriptions (subscribe, renew, ingest pushes, slow polling as fallback)
 - [ ] `amfront`: Live timeline updates (SSE or WebSocket from amagg)
+- [ ] `amfeed`: Push only what's new per subscriber: a cursor per subscription (last entry delivered), each push carries the entries after it (a page with `rel="next"` if there are more), so a push stays one entry and a failed delivery is caught up on the next one
 
 ### Phase 5: Polish
 
