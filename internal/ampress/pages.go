@@ -3,11 +3,13 @@ package ampress
 import (
 	"bytes"
 	"errors"
+	"html"
 	"html/template"
 	"io/fs"
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -56,6 +58,7 @@ type postView struct {
 	Title      string
 	HTML       template.HTML // untrusted for replies, see pageCSP
 	Text       string        // content of type text
+	Excerpt    string        // plain text: the summary, or else the content's first paragraph, shortened
 	Published  string        // RFC 3339
 	Date       string        // e.g. "27 October 2026"
 	AuthorName string
@@ -106,7 +109,41 @@ func (s *Server) postView(e *island.Entry, reply bool) (postView, error) {
 			p.Text = ae.Content.Body
 		}
 	}
+	p.Excerpt = excerpt(ae)
 	return p, nil
+}
+
+const excerptLength = 300 // characters, cut at a word
+
+var (
+	paragraphRe = regexp.MustCompile(`(?is)<p[\s>].*?</p>`)
+	tagRe       = regexp.MustCompile(`(?s)<[^>]*>`)
+)
+
+// excerpt returns an entry's summary, or else the first paragraph of its
+// content, as plain text of at most excerptLength characters.
+func excerpt(e *atom.Entry) string {
+	s := e.Summary
+	if s == "" && e.Content != nil {
+		if e.Content.Type == "html" {
+			s = paragraphRe.FindString(e.Content.Body)
+			if s == "" {
+				s = e.Content.Body
+			}
+			s = html.UnescapeString(tagRe.ReplaceAllString(s, ""))
+		} else {
+			s, _, _ = strings.Cut(strings.TrimSpace(e.Content.Body), "\n\n")
+		}
+	}
+	s = strings.Join(strings.Fields(s), " ")
+	if r := []rune(s); len(r) > excerptLength {
+		cut := string(r[:excerptLength])
+		if i := strings.LastIndex(cut, " "); i > 0 {
+			cut = cut[:i]
+		}
+		s = strings.TrimRight(cut, ",;:.—– ") + "…"
+	}
+	return s
 }
 
 func displayDate(published, fallback string) string {

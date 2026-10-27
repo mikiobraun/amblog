@@ -273,6 +273,25 @@ func TestAboutAndTheme(t *testing.T) {
 	blog.get("/static/", 404)
 }
 
+func TestExcerpt(t *testing.T) {
+	long := strings.Repeat("word ", 100)
+	for _, c := range []struct {
+		entry atom.Entry
+		want  string
+	}{
+		{atom.Entry{Summary: "The summary", Content: &atom.Content{Body: "Content"}}, "The summary"},
+		{atom.Entry{Content: &atom.Content{Type: "html", Body: "<h2>Headlines</h2><ul><li>x</li></ul><p>First &amp; <em>best</em>\nparagraph.</p><p>Second.</p>"}}, "First & best paragraph."},
+		{atom.Entry{Content: &atom.Content{Type: "html", Body: "<div>No <b>paragraph</b></div>"}}, "No paragraph"},
+		{atom.Entry{Content: &atom.Content{Body: "First lines\nof text.\n\nSecond."}}, "First lines of text."},
+		{atom.Entry{Content: &atom.Content{Body: long}}, strings.TrimSpace(strings.Repeat("word ", 59)) + " word…"},
+		{atom.Entry{}, ""},
+	} {
+		if got := excerpt(&c.entry); got != c.want {
+			t.Errorf("excerpt(%+v) = %q, want %q", c.entry.Content, got, c.want)
+		}
+	}
+}
+
 func TestSlugs(t *testing.T) {
 	for id, want := range map[string]string{
 		"tag:miki.one,2026-10:content/2026-10-27": "2026-10-27",

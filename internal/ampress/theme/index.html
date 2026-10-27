@@ -4,6 +4,9 @@
   {{- if .Title}}
   <h2><a href="{{.URL}}">{{.Title}}</a></h2>
   <p class="meta"><time datetime="{{.Published}}">{{.Date}}</time>{{template "replies" .}}</p>
+  {{- if .Excerpt}}
+  <p class="excerpt">{{.Excerpt}} <a class="more" href="{{.URL}}">Read more</a></p>
+  {{- end}}
   {{- else}}
   <div class="content">{{if .HTML}}{{.HTML}}{{else}}<p class="text">{{.Text}}</p>{{end}}</div>
   <p class="meta"><a href="{{.URL}}"><time datetime="{{.Published}}">{{.Date}}</time></a>{{template "replies" .}}</p>
