@@ -933,6 +933,8 @@ ampress turns one feed into a blog. It follows the feed like an aggregator with 
 
 The index, the post pages and the Atom feed contain the feed's **top-level posts**: entries without `thr:in-reply-to` and without a verb (no likes or reposts). The owner's replies to other people's posts stay out. A tombstone removes the post from the index and the feed; its page answers `410 Gone`.
 
+The blog is an island: a post page shows the replies sent to it, not those sent to the post's URL on the feed server or on aggregators.
+
 ### Post URLs
 
 A post is served at `/posts/{slug}`. The slug is the last segment of its entry ID: everything after the last `:` or `/`. So `tag:miki.one,2026-10:content/2026-10-27` → `/posts/2026-10-27` and `tag:miki.one,2024-12:post-42` → `/posts/post-42`. A feed controls its slugs through its IDs, e.g. the frontmatter `id` of a content-folder post. Slugs must be unique within the blog: an entry whose slug belongs to another entry is logged and not shown.
@@ -1170,8 +1172,6 @@ Others:     bring their own feeds and frontends
 ## 12. Open Questions
 
 1. **Follow graph protection** — Signatures keep an aggregator from forging posts, and your content lives on your feed server, but the aggregator sees your follow graph and reading patterns, and shared following lists publish the graph. How much protection does the follow graph need, e.g. lists readable only by aggregators you name?
-2. **Replies that miss the blog** — A reply to a post's amfeed URL reaches the feed server's `replies.atom`, not ampress. Should ampress read `replies.atom` too, so every reply shows under the post?
-
 ### Deferred
 
 - **Rich media** — Media hosting is the feed server's problem. Should amfeed include media upload, or delegate to external hosts?
