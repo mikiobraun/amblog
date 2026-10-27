@@ -20,6 +20,14 @@ type Config struct {
 	Signing    SigningConfig    `toml:"signing"`
 	Storage    StorageConfig    `toml:"storage"`
 	WebMention WebMentionConfig `toml:"webmention"`
+	Content    *ContentConfig   `toml:"content,omitempty"`
+}
+
+// ContentConfig publishes Markdown files from a folder as posts (see the
+// spec, "Content Folder"). The section is optional.
+type ContentConfig struct {
+	Dir     string `toml:"dir"`
+	Pattern string `toml:"pattern"` // glob relative to dir, default "*.md"
 }
 
 // WebMentionConfig is spam control for incoming WebMentions. The section is
@@ -64,12 +72,21 @@ func LoadConfig(path string) (*Config, error) {
 	if !md.IsDefined("webmention", "per_host_per_hour") {
 		c.WebMention.PerHostPerHour = webmention.DefaultPerHostPerHour
 	}
+	if c.Content != nil && c.Content.Pattern == "" {
+		c.Content.Pattern = "*.md"
+	}
 	if err := c.validate(); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	dir := filepath.Dir(path)
 	c.Signing.PrivateKeyPath = resolvePath(dir, c.Signing.PrivateKeyPath)
 	c.Storage.Path = resolvePath(dir, c.Storage.Path)
+	if c.Content != nil {
+		c.Content.Dir = resolvePath(dir, c.Content.Dir)
+		if info, err := os.Stat(c.Content.Dir); err != nil || !info.IsDir() {
+			return nil, fmt.Errorf("%s: content.dir %s is not a directory", path, c.Content.Dir)
+		}
+	}
 	return &c, nil
 }
 
@@ -108,6 +125,12 @@ func (c *Config) validate() error {
 	}
 	if c.WebMention.PerHostPerHour < 1 {
 		errs = append(errs, errors.New("webmention.per_host_per_hour must be at least 1"))
+	}
+	if c.Content != nil {
+		require("content.dir", c.Content.Dir)
+		if _, err := filepath.Match(c.Content.Pattern, ""); err != nil {
+			errs = append(errs, fmt.Errorf("content.pattern: %w", err))
+		}
 	}
 	return errors.Join(errs...)
 }

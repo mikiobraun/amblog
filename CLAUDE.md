@@ -6,7 +6,7 @@ Atomic Micro Blogging: a decentralized social network built from existing web st
 
 ## Status
 
-- **amfeed** (Go): done for v1 — entries, signing, tokens, paged feed, tombstone deletes, login challenges, its own WebSub hub, WebMentions (sends for replies, receives into `replies.atom`).
+- **amfeed** (Go): done for v1 — entries, signing, tokens, paged feed, tombstone deletes, login challenges, its own WebSub hub, WebMentions (sends for replies, receives into `replies.atom`), content folder (Markdown files as posts).
 - **am** (Go CLI): config, post, reply, ls, rm, token create, show (with signature verification); login, follow, unfollow, following, timeline (aggregator).
 - **amfront** (Vue): timeline (my feed / home / island / custom), compose/reply/delete, thread view, aggregator login (challenge flow), following, feed reader passwords, in-browser signature verification.
 - **amagg** (Go): roadmap Phase 2 done — challenge login with invites, follows, polling/ingest with verification and the replacement rule, island + member timelines, re-served entries, threads + missing parents, post pages, OPML export, feed reader Basic auth, public/private, feed proxy; WebSub subscriptions, receiving WebMentions, forwarding replies to their source, spam control (rate limit, blocklist, `nofollow ugc`).
@@ -25,7 +25,7 @@ internal/paging/           RFC 5005 ?before= cursor (amfeed + amagg)
 internal/web/              shared HTTP helpers: JSON, CORS, bearer tokens
 internal/webmention/       WebMention: discovery, sending with retries, link checks, per-host rate limit
 internal/websub/           WebSub: content signature, lease limits (hub in amfeed, subscriber in amagg)
-internal/amfeed/           config (TOML), SQLite store, HTTP server, HTML pages, init
+internal/amfeed/           config (TOML), SQLite store, HTTP server, HTML pages, init, content folder sync
 internal/amagg/            config, store, login (challenge), fetch/discovery, ingest, poll, follow, timeline, HTML
 amfront/                   Vue 3 + Vite + TypeScript static client
   src/lib/atom.ts          Atom parsing (mirrors internal/atom)
@@ -74,7 +74,7 @@ The `Makefile` wraps the common ones: `make build`, `make test`, `make check` (g
 - **Simple and explicit over clever.** Fail loudly with a clear message instead of guessing. Examples in the code: unknown TOML keys are errors, JSON request bodies reject unknown fields, malformed page cursors return 400, signed content types are restricted to `text`/`html`.
 - **Reuse existing standards** (RFC 4287/4685/5005, WebSub, WebMention). Our own extensions live in the `atomic:` namespace (`https://atomicmicro.blog/ns/1.0`) and should stay few.
 - **Interop that matters:** plain feed readers and WebMention-enabled blogs. Interop with ActivityPub/AT Protocol is a non-goal.
-- **Small dependency footprint.** Go: stdlib + `modernc.org/sqlite` (pure Go, no cgo) + `BurntSushi/toml`. amfront: Vue + DOMPurify.
+- **Small dependency footprint.** Go: stdlib + `modernc.org/sqlite` (pure Go, no cgo) + `BurntSushi/toml` + `yuin/goldmark` (Markdown for the content folder). amfront: Vue + DOMPurify. Frontmatter is read by a few lines of our own, not a YAML library.
 
 ## Key invariants — don't break these
 
@@ -96,7 +96,8 @@ The `Makefile` wraps the common ones: `make build`, `make test`, `make check` (g
 - Pollers must treat entries with `updated` equal to the last seen value as possibly changed (second precision).
 
 ### Entries, IDs, deletes
-- Post numbers are sequential; IDs are `tag:<host>,<YYYY-MM>:<port and path>/post-<n>` (no `<…>/` part when the base URL has neither port nor path) and stored at creation (never recomputed). Ports matter: feeds on one host must not mint the same IDs.
+- Post numbers are sequential; IDs are `tag:<host>,<YYYY-MM>:<port and path>/post-<n>` (no `<…>/` part when the base URL has neither port nor path) and stored at creation (never recomputed). Ports matter: feeds on one host must not mint the same IDs. Content-folder posts use `content/<path without extension>` instead of `post-<n>` (or a frontmatter `id`).
+- Content-folder posts are rows like any other, plus `source_path`/`source_hash`. The sync owns rows with a `source_path`; the API never changes them (`DELETE` → 409). The hash covers everything the entry is built from (frontmatter, title, body with wikilinks resolved), so the HTML is only re-rendered and re-signed when the input changes, not when goldmark changes. A missing folder must never tombstone posts.
 - Delete = tombstone: content and title cleared, ID kept, `updated` bumped, re-signed, stays in the feed. amfront recognizes tombstones by empty content+title+verb (safe because the API rejects empty posts). An explicit marker (e.g. RFC 6721) may replace this.
 
 ### Auth and CORS

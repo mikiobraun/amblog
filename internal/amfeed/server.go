@@ -48,7 +48,9 @@ type Server struct {
 	handler      http.Handler
 	client       *http.Client // for WebSub pushes and WebMentions
 	limiter      *webmention.Limiter
-	bg           sync.WaitGroup // background deliveries, see Wait
+	bg           sync.WaitGroup    // background deliveries, see Wait
+	syncMu       sync.Mutex        // one content sync at a time; guards skipped
+	skipped      map[string]string // content files skipped, with the reason last logged
 
 	mu         sync.Mutex
 	challenges map[string]challenge // login challenges by token, kept in memory
@@ -76,7 +78,7 @@ func NewServer(cfg *Config, store *Store, key ed25519.PrivateKey) (*Server, erro
 		idPath += "/"
 	}
 	s := &Server{cfg: cfg, store: store, key: key, idPrefix: "tag:" + u.Hostname() + ",", idPath: idPath, keysURL: keysURL,
-		feedPageSize: feedPageSize, now: time.Now, challenges: map[string]challenge{},
+		feedPageSize: feedPageSize, now: time.Now, challenges: map[string]challenge{}, skipped: map[string]string{},
 		client:  &http.Client{Timeout: 20 * time.Second},
 		limiter: webmention.NewLimiter(cfg.WebMention.PerHostPerHour)}
 
@@ -411,23 +413,32 @@ func (s *Server) handleDeleteEntry(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if e.SourcePath != "" {
+		writeError(w, http.StatusConflict, "this post is the file "+e.SourcePath+" in the content folder; delete the file instead")
+		return
+	}
 	if !e.Deleted {
-		e.Title = ""
-		e.ContentType = "text"
-		e.Content = ""
-		e.Updated = s.now().UTC().Format(time.RFC3339)
-		e.Deleted = true
-		if err := s.sign(e); err != nil {
-			s.serverError(w, err)
-			return
-		}
-		if err := s.store.UpdateEntry(e); err != nil {
+		if err := s.tombstone(e); err != nil {
 			s.serverError(w, err)
 			return
 		}
 		s.announce(e)
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// tombstone clears the entry's content and title, bumps updated, re-signs
+// and stores it.
+func (s *Server) tombstone(e *Entry) error {
+	e.Title = ""
+	e.ContentType = "text"
+	e.Content = ""
+	e.Updated = s.now().UTC().Format(time.RFC3339)
+	e.Deleted = true
+	if err := s.sign(e); err != nil {
+		return err
+	}
+	return s.store.UpdateEntry(e)
 }
 
 type createTokenRequest struct {

@@ -13,6 +13,10 @@ var ErrNotFound = errors.New("not found")
 
 // Entry is a stored entry. Seq is the local post number (/posts/{seq}),
 // ID the Atom entry id. Times are RFC 3339 strings, as signed.
+//
+// Entries made from a file in the content folder have a SourcePath (relative
+// to the folder) and the SourceHash they were built from; the content sync
+// owns them, the API doesn't change them.
 type Entry struct {
 	Seq           int64
 	ID            string
@@ -27,6 +31,8 @@ type Entry struct {
 	KeyID         string
 	Signature     string
 	Deleted       bool
+	SourcePath    string
+	SourceHash    string
 }
 
 var schema = []string{
@@ -45,7 +51,9 @@ var schema = []string{
 		verb             TEXT NOT NULL,
 		key_id           TEXT NOT NULL,
 		signature        TEXT NOT NULL,
-		deleted          INTEGER NOT NULL
+		deleted          INTEGER NOT NULL,
+		source_path      TEXT NOT NULL DEFAULT '',
+		source_hash      TEXT NOT NULL DEFAULT ''
 	)`,
 	`CREATE INDEX IF NOT EXISTS entries_feed_order ON entries (updated, seq)`,
 	`CREATE TABLE IF NOT EXISTS tokens (
@@ -91,18 +99,43 @@ func OpenStore(path string) (*Store, error) {
 			return nil, err
 		}
 	}
+	if err := migrate(db); err != nil {
+		db.Close()
+		return nil, err
+	}
 	return &Store{db: db}, nil
+}
+
+// migrate brings databases created by older versions up to the schema.
+func migrate(db *sql.DB) error {
+	var n int
+	err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('entries') WHERE name = 'source_path'`).Scan(&n)
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		for _, stmt := range []string{
+			`ALTER TABLE entries ADD COLUMN source_path TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE entries ADD COLUMN source_hash TEXT NOT NULL DEFAULT ''`,
+		} {
+			if _, err := db.Exec(stmt); err != nil {
+				return err
+			}
+		}
+	}
+	_, err = db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS entries_source ON entries (source_path) WHERE source_path <> ''`)
+	return err
 }
 
 func (s *Store) Close() error { return s.db.Close() }
 
 const entryColumns = `seq, id, published, updated, title, content_type, content,
-	in_reply_to_ref, in_reply_to_href, verb, key_id, signature, deleted`
+	in_reply_to_ref, in_reply_to_href, verb, key_id, signature, deleted, source_path, source_hash`
 
 func scanEntry(row interface{ Scan(...any) error }) (*Entry, error) {
 	var e Entry
 	err := row.Scan(&e.Seq, &e.ID, &e.Published, &e.Updated, &e.Title, &e.ContentType, &e.Content,
-		&e.InReplyToRef, &e.InReplyToHref, &e.Verb, &e.KeyID, &e.Signature, &e.Deleted)
+		&e.InReplyToRef, &e.InReplyToHref, &e.Verb, &e.KeyID, &e.Signature, &e.Deleted, &e.SourcePath, &e.SourceHash)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -126,9 +159,9 @@ func (s *Store) CreateEntry(build func(seq int64) (*Entry, error)) (*Entry, erro
 	if err != nil {
 		return nil, err
 	}
-	_, err = tx.Exec(`INSERT INTO entries (`+entryColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	_, err = tx.Exec(`INSERT INTO entries (`+entryColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.Seq, e.ID, e.Published, e.Updated, e.Title, e.ContentType, e.Content,
-		e.InReplyToRef, e.InReplyToHref, e.Verb, e.KeyID, e.Signature, e.Deleted)
+		e.InReplyToRef, e.InReplyToHref, e.Verb, e.KeyID, e.Signature, e.Deleted, e.SourcePath, e.SourceHash)
 	if err != nil {
 		return nil, err
 	}
@@ -137,10 +170,11 @@ func (s *Store) CreateEntry(build func(seq int64) (*Entry, error)) (*Entry, erro
 
 func (s *Store) UpdateEntry(e *Entry) error {
 	res, err := s.db.Exec(`UPDATE entries SET updated = ?, title = ?, content_type = ?, content = ?,
-		in_reply_to_ref = ?, in_reply_to_href = ?, verb = ?, key_id = ?, signature = ?, deleted = ?
+		in_reply_to_ref = ?, in_reply_to_href = ?, verb = ?, key_id = ?, signature = ?, deleted = ?,
+		source_hash = ?
 		WHERE seq = ?`,
 		e.Updated, e.Title, e.ContentType, e.Content,
-		e.InReplyToRef, e.InReplyToHref, e.Verb, e.KeyID, e.Signature, e.Deleted, e.Seq)
+		e.InReplyToRef, e.InReplyToHref, e.Verb, e.KeyID, e.Signature, e.Deleted, e.SourceHash, e.Seq)
 	if err != nil {
 		return err
 	}
@@ -152,6 +186,25 @@ func (s *Store) UpdateEntry(e *Entry) error {
 
 func (s *Store) GetEntry(seq int64) (*Entry, error) {
 	return scanEntry(s.db.QueryRow(`SELECT `+entryColumns+` FROM entries WHERE seq = ?`, seq))
+}
+
+// SourceEntries returns the entries made from content files, deleted ones
+// included, by source path.
+func (s *Store) SourceEntries() (map[string]*Entry, error) {
+	rows, err := s.db.Query(`SELECT ` + entryColumns + ` FROM entries WHERE source_path <> ''`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	entries := map[string]*Entry{}
+	for rows.Next() {
+		e, err := scanEntry(rows)
+		if err != nil {
+			return nil, err
+		}
+		entries[e.SourcePath] = e
+	}
+	return entries, rows.Err()
 }
 
 // ListEntries returns up to limit entries in feed order: most recently

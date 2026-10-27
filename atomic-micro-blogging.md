@@ -156,6 +156,7 @@ The feed server is the simplest component. It stores your posts and serves them 
 6. Send WebMentions for its own replies
 7. Act as the WebSub hub for its feed, pushing updates to subscribed aggregators
 8. Publish login challenges, so the owner can prove ownership of the identity to aggregators
+9. Optionally, publish Markdown files from a folder as posts (see [Content Folder](#content-folder))
 
 ### Data Model
 
@@ -218,7 +219,7 @@ An entry is an Atom entry (RFC 4287) with extensions:
 </feed>
 ```
 
-**Entry IDs** are tag URIs (RFC 4151) minted from the feed's base URL: `tag:<host>,<YYYY-MM>:<path>/post-<n>`, where `<path>` is the base URL's port (if any) and path, without surrounding slashes, and the `<path>/` part is dropped when both are empty. So `https://miki.one` mints `tag:miki.one,2024-12:post-42`, `https://amhost.example/mikio` mints `tag:amhost.example,2024-12:mikio/post-42`, and `http://localhost:8100` mints `tag:localhost,2024-12:8100/post-42`. Identities on the same host can't collide. IDs are assigned once and never recomputed.
+**Entry IDs** are tag URIs (RFC 4151) minted from the feed's base URL: `tag:<host>,<YYYY-MM>:<path>/post-<n>`, where `<path>` is the base URL's port (if any) and path, without surrounding slashes, and the `<path>/` part is dropped when both are empty. So `https://miki.one` mints `tag:miki.one,2024-12:post-42`, `https://amhost.example/mikio` mints `tag:amhost.example,2024-12:mikio/post-42`, and `http://localhost:8100` mints `tag:localhost,2024-12:8100/post-42`. Identities on the same host can't collide. Posts from the content folder use `content/<file path without extension>` instead of `post-<n>` (e.g. `tag:miki.one,2026-10:content/2026-10-27`), or the `id` from their frontmatter. IDs are assigned once and never recomputed.
 
 ### Entry Signing
 
@@ -325,7 +326,7 @@ Location: https://miki.one/posts/42
 
 #### `DELETE /api/entries/{n}`
 
-Soft-delete post number `n` (as in `/posts/{n}`): content and title are cleared, the ID is kept, `updated` is bumped and the entry is re-signed. The tombstone stays in the feed so aggregators learn about the deletion.
+Soft-delete post number `n` (as in `/posts/{n}`): content and title are cleared, the ID is kept, `updated` is bumped and the entry is re-signed. The tombstone stays in the feed so aggregators learn about the deletion. Posts from the content folder answer `409 Conflict`: delete the file instead.
 
 #### `GET /api/entries`
 
@@ -387,6 +388,18 @@ When an entry has a `thr:in-reply-to` `href`, amfeed sends a WebMention with `so
 - On `429 Too Many Requests`, amfeed retries after `Retry-After`.
 - A reply made from an aggregator's timeline points at that aggregator's post page, so the aggregator receives the reply at once. A reply to a plain blog reaches the blog directly, with no aggregator involved.
 - Aggregators that ingest the reply still forward it to the source (see [Conversations and Replies](#conversations-and-replies)). WebMention is idempotent per source and target, so the duplicate is harmless.
+
+### Content Folder
+
+amfeed can publish a folder of Markdown files, such as a folder in a notes vault that an agent writes to (`[content]` in the config). Files are the source of the content; the database keeps everything else (post numbers, signatures, subscriptions, mentions). Posts from files and posts from the API live side by side in one feed.
+
+- **Sync:** amfeed checks the folder at startup and then every minute. A new file becomes a post, a changed file updates its post (new `updated`, re-signed), a removed file turns its post into a tombstone, and a file that comes back revives it. Subscribers get one push per sync that changed anything. A missing folder is an error and changes nothing.
+- **Which files:** those matching `pattern` (default `*.md`) relative to the folder, except hidden ones. Renaming a file makes it a new post.
+- **Frontmatter:** an optional leading `---` block. amfeed reads `title`, `date` (`YYYY-MM-DD` for midnight UTC, or RFC 3339) and `id`, as plain or quoted one-line values, and ignores every other key. A file whose frontmatter can't be read is skipped and logged.
+- **Title:** `title` from the frontmatter, else a leading `# Heading` (removed from the body), else the file name without extension.
+- **Published:** `date` from the frontmatter, else when amfeed first saw the file.
+- **Content:** Markdown (CommonMark with GitHub extensions) rendered to HTML, which is what's signed. Raw HTML in the file is left out. A wikilink (`[[name]]`, `[[name|label]]`) becomes a link when another file in the folder has that name, otherwise plain text, so nothing points into unpublished notes.
+- **Ownership:** the sync owns posts from files; the API doesn't change or delete them.
 
 ### Storage
 
@@ -995,6 +1008,15 @@ key_created = 2026-10-21T21:00:00Z
 
 [storage]
 path = "amfeed.db"
+
+[webmention]
+per_host_per_hour = 30    # incoming mentions per sending host, then 429
+block_hosts = []          # sending hosts whose mentions are rejected
+
+# Optional: publish Markdown files as posts (see Content Folder)
+[content]
+dir = "/home/mikio/vault/briefs"
+pattern = "*.md"          # default
 ```
 
 ### amagg
@@ -1155,5 +1177,6 @@ Others:     bring their own feeds and frontends
 - [ ] `amfront`: Media upload flow
 - [ ] `amfeed`: Store the author URI per entry, so changing `base_url`/`author_uri` doesn't silently break existing signatures
 - [ ] `amfeed`: Explicit tombstone marker (e.g. RFC 6721) instead of "empty content"
+- [x] `amfeed`: Content folder (Markdown files with frontmatter as posts)
 - [x] Landing page at atomicmicro.blog, with go-import tag for the module path
 - [ ] Documentation site at atomicmicro.blog

@@ -5,6 +5,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -95,6 +96,10 @@ func runServe(args []string) error {
 	}
 	abs, _ := filepath.Abs(*configPath)
 	log.Printf("amfeed: serving %s on %s (config %s)", cfg.Feed.BaseURL, cfg.Server.Listen, abs)
+	if cfg.Content != nil {
+		log.Printf("amfeed: publishing %s from %s", cfg.Content.Pattern, cfg.Content.Dir)
+		go srv.RunContentSync(context.Background())
+	}
 	hs := &http.Server{
 		Addr:              cfg.Server.Listen,
 		Handler:           srv,
