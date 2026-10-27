@@ -1,0 +1,102 @@
+:root {
+  --bg: #fdfcf9;
+  --fg: #22211f;
+  --muted: #6d6a64;
+  --rule: #e4e0d8;
+  --accent: #b4462b;
+  --reply-bg: #f6f3ec;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1a1918;
+    --fg: #e8e5df;
+    --muted: #9b968d;
+    --rule: #34322f;
+    --accent: #e8805f;
+    --reply-bg: #232220;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0 auto;
+  max-width: 42rem;
+  padding: 0 1rem;
+  background: var(--bg);
+  color: var(--fg);
+  font: 1.0625rem/1.65 Charter, "Bitstream Charter", "Sitka Text", Cambria, Georgia, serif;
+}
+
+a { color: var(--accent); }
+a:hover { text-decoration-thickness: 2px; }
+
+header.site {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem 1.5rem;
+  padding: 2.5rem 0 1.5rem;
+  border-bottom: 1px solid var(--rule);
+  margin-bottom: 2rem;
+}
+
+.site-title {
+  color: var(--fg);
+  text-decoration: none;
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+header.site nav { display: flex; gap: 1rem; }
+header.site nav a, footer.site a { color: var(--muted); }
+
+h1, h2, h3 { line-height: 1.25; letter-spacing: -0.01em; }
+h1 { font-size: 2rem; margin: 0 0 0.25rem; }
+
+.entry { margin-bottom: 2.5rem; }
+.entry > h2 { margin: 0 0 0.25rem; font-size: 1.375rem; }
+.entry > h2 a { color: var(--fg); text-decoration: none; }
+.entry > h2 a:hover { color: var(--accent); }
+
+.meta { margin: 0 0 1rem; color: var(--muted); font-size: 0.875rem; }
+.meta a { color: var(--muted); }
+
+.content img { max-width: 100%; height: auto; }
+.content pre { overflow-x: auto; padding: 0.75rem; background: var(--reply-bg); border-radius: 4px; }
+.content blockquote { margin: 0; padding-left: 1rem; border-left: 3px solid var(--rule); color: var(--muted); }
+.content table { border-collapse: collapse; display: block; overflow-x: auto; }
+.content th, .content td { border: 1px solid var(--rule); padding: 0.25rem 0.5rem; }
+.text { white-space: pre-wrap; }
+
+.replies { border-top: 1px solid var(--rule); padding-top: 1rem; }
+.replies > h2 { font-size: 1.125rem; }
+.reply {
+  margin: 0 0 1rem;
+  padding: 0.75rem 1rem;
+  background: var(--reply-bg);
+  border-radius: 6px;
+  font-size: 0.9375rem;
+}
+.reply .meta { margin-bottom: 0.5rem; }
+.reply .content > :first-child { margin-top: 0; }
+.reply .content > :last-child { margin-bottom: 0; }
+.depth-2 { margin-left: 1.5rem; }
+.depth-3 { margin-left: 3rem; }
+.depth-4, .depth-5, .depth-6, .depth-7, .depth-8 { margin-left: 4.5rem; }
+.unverified { font-style: italic; }
+.hint { color: var(--muted); font-size: 0.875rem; }
+
+.pager { margin: 2rem 0; }
+.empty { color: var(--muted); }
+
+footer.site {
+  margin: 3rem 0 2rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--rule);
+  color: var(--muted);
+  font-size: 0.875rem;
+}

@@ -1,0 +1,20 @@
+{{define "content" -}}
+{{range .Posts}}
+<article class="entry">
+  {{- if .Title}}
+  <h2><a href="{{.URL}}">{{.Title}}</a></h2>
+  <p class="meta"><time datetime="{{.Published}}">{{.Date}}</time>{{template "replies" .}}</p>
+  {{- else}}
+  <div class="content">{{if .HTML}}{{.HTML}}{{else}}<p class="text">{{.Text}}</p>{{end}}</div>
+  <p class="meta"><a href="{{.URL}}"><time datetime="{{.Published}}">{{.Date}}</time></a>{{template "replies" .}}</p>
+  {{- end}}
+</article>
+{{else}}
+<p class="empty">No posts yet.</p>
+{{end}}
+{{- if .NextURL}}
+<nav class="pager"><a href="{{.NextURL}}">Older posts →</a></nav>
+{{- end}}
+{{end}}
+
+{{define "replies"}}{{if .Replies}} · <a href="{{.URL}}#replies">{{.Replies}} {{if eq .Replies 1}}reply{{else}}replies{{end}}</a>{{end}}{{end}}

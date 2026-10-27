@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"atomicmicro.blog/internal/atom"
 	"atomicmicro.blog/internal/sign"
 	"atomicmicro.blog/internal/webmention"
 )
@@ -26,6 +27,9 @@ type Options struct {
 	// Target returns the entry one of the island's URLs shows, for incoming
 	// WebMentions. ok is false for URLs that aren't posts of the island.
 	Target func(url string) (e *Entry, ok bool, err error)
+	// Ingested, if set, is called after an entry was stored or replaced, with
+	// the entry as stored (author filled in). An error fails the ingest.
+	Ingested func(e *Entry, ae *atom.Entry) error
 }
 
 type Island struct {

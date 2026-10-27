@@ -1,0 +1,27 @@
+{{define "content" -}}
+{{with .Post}}
+<article class="entry post">
+  {{- if .Title}}
+  <h1>{{.Title}}</h1>
+  {{- end}}
+  <p class="meta"><time datetime="{{.Published}}">{{.Date}}</time>{{if .AuthorName}} · {{.AuthorName}}{{end}}</p>
+  <div class="content">{{if .HTML}}{{.HTML}}{{else}}<p class="text">{{.Text}}</p>{{end}}</div>
+</article>
+{{end}}
+<section class="replies" id="replies">
+  {{- if .Replies}}
+  <h2>{{len .Replies}} {{if eq (len .Replies) 1}}reply{{else}}replies{{end}}</h2>
+  {{- end}}
+  {{- range .Replies}}
+  <article class="reply depth-{{.Depth}}">
+    <p class="meta">
+      {{- if .AuthorURI}}<a href="{{.AuthorURI}}" rel="nofollow ugc">{{.AuthorName}}</a>{{else}}{{.AuthorName}}{{end}}
+      {{- if not .Verified}} <span class="unverified" title="Signature not verified">unverified, from {{.From}}</span>{{end}}
+      · {{if .Via}}<a href="{{.Via}}" rel="nofollow ugc"><time datetime="{{.Published}}">{{.Date}}</time></a>{{else}}<time datetime="{{.Published}}">{{.Date}}</time>{{end}}
+    </p>
+    <div class="content">{{if .HTML}}{{.HTML}}{{else}}<p class="text">{{.Text}}</p>{{end}}</div>
+  </article>
+  {{- end}}
+  <p class="hint">To reply, link to this page from your own blog or feed. Replies arrive via WebMention.</p>
+</section>
+{{end}}

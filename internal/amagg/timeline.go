@@ -1,8 +1,6 @@
 package amagg
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -95,25 +93,7 @@ func (s *Server) serveTimeline(w http.ResponseWriter, r *http.Request, userID in
 		f.Entries = append(f.Entries, ae)
 		f.Updated = max(f.Updated, e.Updated)
 	}
-	s.writeAtom(w, r, f)
-}
-
-// writeAtom writes a feed with an ETag, answering If-None-Match with 304.
-func (s *Server) writeAtom(w http.ResponseWriter, r *http.Request, f *atom.Feed) {
-	body, err := atom.MarshalFeed(f)
-	if err != nil {
-		web.ServerError(w, err)
-		return
-	}
-	sum := sha256.Sum256(body)
-	etag := `"` + hex.EncodeToString(sum[:16]) + `"`
-	w.Header().Set("ETag", etag)
-	if r.Header.Get("If-None-Match") == etag {
-		w.WriteHeader(http.StatusNotModified)
-		return
-	}
-	w.Header().Set("Content-Type", atom.MediaType+"; charset=utf-8")
-	w.Write(body)
+	island.WriteAtom(w, r, f)
 }
 
 // reserve prepares a stored entry for serving from this aggregator: its own
@@ -268,7 +248,7 @@ func (s *Server) handleThread(w http.ResponseWriter, r *http.Request) {
 		f.Entries = append(f.Entries, ae)
 		f.Updated = max(f.Updated, it.Entry.Updated)
 	}
-	s.writeAtom(w, r, f)
+	island.WriteAtom(w, r, f)
 }
 
 func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {

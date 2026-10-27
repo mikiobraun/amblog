@@ -10,7 +10,7 @@ Atomic Micro Blogging: a decentralized social network built from existing web st
 - **am** (Go CLI): config, post, reply, ls, rm, token create, show (with signature verification); login, follow, unfollow, following, timeline (aggregator).
 - **amfront** (Vue): timeline (my feed / home / island / custom), compose/reply/delete, thread view, aggregator login (challenge flow), following, feed reader passwords, in-browser signature verification.
 - **amagg** (Go): roadmap Phase 2 done — challenge login with invites, follows, polling/ingest with verification and the replacement rule, island + member timelines, re-served entries, threads + missing parents, post pages, OPML export, feed reader Basic auth, public/private, feed proxy; WebSub subscriptions, receiving WebMentions, forwarding replies to their source, spam control (rate limit, blocklist, `nofollow ugc`).
-- **ampress** (Go): blog for one feed; specced (spec §7), not built yet.
+- **ampress** (Go): v1 done — blog for one feed: index, post pages (`/posts/{slug}`) with WebMention replies, about page, Atom feed, themes (built-in, overridable file by file).
 - Not yet built: `/api/mentions`, likes/reposts UI, islands consuming islands, shared following lists, media, moderation.
 
 ## Layout
@@ -19,6 +19,7 @@ Atomic Micro Blogging: a decentralized social network built from existing web st
 atomic-micro-blogging.md   the spec
 cmd/amfeed/                feed server binary: `amfeed init`, `amfeed serve`
 cmd/amagg/                 aggregator binary: `amagg init`, `amagg serve` (server + poller), `amagg invite`
+cmd/ampress/               blog binary: `ampress init`, `ampress serve` (server + poller)
 cmd/am/                    CLI client (talks HTTP only; config in $AM_CONFIG or ~/.config/am/config.toml)
 internal/atom/             Atom types, parse/marshal (shared by all Go components)
 internal/sign/             signing input, Ed25519 sign/verify, key document, KeyCache, identity URLs, PEM key files
@@ -29,6 +30,8 @@ internal/websub/           WebSub: content signature, lease limits (hub in amfee
 internal/amfeed/           config (TOML), SQLite store, HTTP server, HTML pages, init, content folder sync
 internal/island/           what every island shares: feeds/entries/subscriptions store, fetch/discovery, ingest, poll, WebSub subscriber, WebMentions (receive, forward), threads
 internal/amagg/            island + members: config, store (users, tokens, readers, invites, follows), login (challenge), follow, timeline, HTML
+internal/ampress/          island + one feed: config, store (blog feed, posts by slug), pages, theme loading
+  theme/                   built-in theme (templates + static/), embedded
 amfront/                   Vue 3 + Vite + TypeScript static client
   src/lib/atom.ts          Atom parsing (mirrors internal/atom)
   src/lib/sign.ts          signing input + Web Crypto verification (mirrors internal/sign)
@@ -51,7 +54,7 @@ site/                      landing page + Caddyfile for atomicmicro.blog (serves
 # Go (module atomicmicro.blog, workspace via ~/Projects/go.work)
 go test ./...
 go vet ./...
-go build -o . ./cmd/...          # ./amfeed, ./amagg and ./am (gitignored)
+go build -o . ./cmd/...          # ./amfeed, ./amagg, ./ampress and ./am (gitignored)
 
 # amfront
 cd amfront
@@ -112,7 +115,8 @@ The `Makefile` wraps the common ones: `make build`, `make test`, `make check` (g
 - Entries are keyed by Atom `id`; `feed_id` NULL means "not from a polled feed" (e.g. a fetched parent) and keeps the entry out of timelines.
 - Stored times (`sort_time`, `updated`, `last_seen`) are normalized to RFC 3339 UTC seconds so they compare as strings; `last_seen` never passes "now".
 - Login fetches the challenge **without redirects**; identity URIs must be HTTPS except on loopback hosts.
-- Post pages render untrusted feed HTML under a sandboxing CSP (`island.PageCSP`); keep that header on every HTML response.
+- Post pages render untrusted feed HTML under a sandboxing CSP (`island.PageCSP`; ampress's `pageCSP` also allows its own styles and fonts); keep that header on every HTML response.
+- ampress: posts are top-level entries of the blog's feed, kept in `posts` by the island's `Ingested` hook; the slug is the last segment of the entry ID, and the first entry to claim a slug keeps it.
 - Several paths can ingest the same entry at once (WebSub push, WebMention, poll). `InsertEntry` is insert-or-nothing; on a lost race `ingest` falls through to the replacement rule. Don't reintroduce check-then-insert.
 - Feed polling state is updated under `feedMu` (polls and pushes both write it); `PollFeed` re-reads the feed inside the lock.
 - Background work (WebMentions, pushes, forwarding) goes through `background()`; tests wait for it with `wait()` (amagg, i.e. `island.Wait()`) / `Wait()` (amfeed) instead of sleeping.
@@ -133,6 +137,7 @@ The `Makefile` wraps the common ones: `make build`, `make test`, `make check` (g
 
 - Go: `internal/amfeed/server_test.go` runs the real server via `httptest` (Init → LoadConfig → NewServer) and verifies signatures over HTTP. The server's clock is injectable (`srv.now`) — use `env.tick()` for deterministic `updated` ordering.
 - `internal/amagg/server_test.go` runs real amfeed servers (`startFeed`) plus amagg (`startAgg`) and goes through the full login flow (`agg.login`). `agg.poll()` advances amagg's clock and polls; plain-feed cases use a hand-written Atom server. Real amfeeds push via WebSub, so posts usually arrive without a poll: call `feed.wait()` / `agg.srv.wait()` to let pushes and WebMentions finish (`live_test.go`). amagg's clock is frozen while the feeds' clocks are real, so don't assert on ordering between entries timestamped by different servers.
+- `internal/ampress/server_test.go` works the same way (`startFeed`, `startBlog`, `blog.poll()`, `blog.srv.Wait()`). Tests must not reach the internet: replies need local targets, or amfeed's WebMention retries make a test take minutes.
 - The race detector doesn't run on the Pi (ThreadSanitizer needs 48-bit VMA); use `go test -count=N` to shake out flakiness.
 - Cross-language: amfront tests verify fixtures produced by the Go server. If you touch signing or Atom serialization, run `amfront/scripts/gen-fixtures.sh` and both test suites.
 - Component tests mount Vue components directly with `createApp` in happy-dom and stub `fetch` (no @vue/test-utils).

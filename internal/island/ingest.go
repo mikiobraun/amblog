@@ -72,6 +72,9 @@ func (is *Island) ingest(e *atom.Entry, o origin) (changed bool, err error) {
 			return false, err
 		}
 		if inserted {
+			if err := is.ingested(in, e); err != nil {
+				return true, err
+			}
 			// A new reply whose parent we don't know: fetch the parent once,
 			// so the thread has its context.
 			if e.InReplyTo != nil && e.InReplyTo.Ref != "" {
@@ -105,10 +108,20 @@ func (is *Island) ingest(e *atom.Entry, o origin) (changed bool, err error) {
 	if err := is.Store.ReplaceEntry(in); err != nil {
 		return false, err
 	}
+	if err := is.ingested(in, e); err != nil {
+		return true, err
+	}
 	if in.XML != stored.XML {
 		is.forwardReply(e, o) // an edit or delete
 	}
 	return true, nil
+}
+
+func (is *Island) ingested(in *Entry, e *atom.Entry) error {
+	if is.opts.Ingested == nil {
+		return nil
+	}
+	return is.opts.Ingested(in, e)
 }
 
 // mayReplace is the replacement rule: a verified version replaces an entry of

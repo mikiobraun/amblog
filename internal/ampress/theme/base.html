@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{if .Title}}{{.Title}} · {{end}}{{.Blog.Title}}</title>
+<link rel="stylesheet" href="{{.Blog.URL}}/static/style.css">
+<link rel="alternate" type="application/atom+xml" href="{{.Blog.FeedURL}}" title="{{.Blog.Title}}">
+{{- if .WebMention}}
+<link rel="webmention" href="{{.WebMention}}">
+{{- end}}
+</head>
+<body>
+<header class="site">
+  <a class="site-title" href="{{.Blog.URL}}/">{{.Blog.Title}}</a>
+  <nav>
+    {{- if .Blog.About}}<a href="{{.Blog.URL}}/about">About</a>{{end -}}
+    <a href="{{.Blog.FeedURL}}">Feed</a>
+  </nav>
+</header>
+<main>
+{{template "content" .}}
+</main>
+<footer class="site">Published with <a href="https://atomicmicro.blog/">ampress</a></footer>
+</body>
+</html>

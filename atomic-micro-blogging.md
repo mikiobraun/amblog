@@ -950,11 +950,11 @@ A post is served at `/posts/{slug}`. The slug is the last segment of its entry I
 | `/webmention` | WebMention endpoint, advertised on every post page |
 | `/static/{file}` | Static files of the theme (CSS, images) |
 
-Feed HTML is rendered under the same sandboxing CSP as amagg's post pages.
+Pages are served under a sandboxing CSP like amagg's post pages (no scripts, forms or plugins), which also lets the theme's own stylesheets and fonts load.
 
 ### Themes
 
-Pages are Go `html/template` files. ampress has a default theme built in. A configured `theme` folder overrides it file by file: a file in the folder replaces the built-in one with the same name, and everything else stays default. Templates are replaced whole, never merged.
+Pages are Go `html/template` files: `base.html` (the layout) and one template per page (`index.html`, `post.html`, `about.html`, `notfound.html`), each defining the `content` block; static files live under `static/`. ampress has a default theme built in. A configured `theme` folder overrides it file by file: a file in the folder replaces the built-in one with the same name, and everything else stays default. Templates are replaced whole, never merged, and are read at startup.
 
 ---
 
@@ -1248,7 +1248,7 @@ Others:     bring their own feeds and frontends
 
 ### Phase 6: ampress
 
-- [ ] v1: index, post pages, about page, Atom feed, WebMention replies, themes
+- [x] v1: index, post pages, about page, Atom feed, WebMention replies, themes
 - [ ] v1.5: readers count, emoji reactions
 - [ ] v2: public comments; commenters without a feed get an identity on a multi-user amfeed (email registration)
-- [ ] Move the parts of amagg that ampress uses out of `internal/` into a public package
+- [ ] Make the island core (following feeds, ingest, WebSub, WebMentions; `internal/island`) a public package

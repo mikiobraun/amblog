@@ -2,8 +2,8 @@ package island
 
 import "testing"
 
-// The island is tested end to end through amagg (internal/amagg); these are
-// its pure functions.
+// The island is tested end to end through amagg (internal/amagg) and ampress
+// (internal/ampress); these are its pure functions.
 
 func TestMayReplace(t *testing.T) {
 	v := func(author, from string) *Entry { return &Entry{Verified: true, AuthorURI: author, FetchedFrom: from} }
