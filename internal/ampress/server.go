@@ -60,6 +60,9 @@ func NewServer(cfg *Config, store *Store) (*Server, error) {
 		return nil, err
 	}
 	s.feedID = f.ID
+	if err := s.rebuildPosts(); err != nil {
+		return nil, err
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.handleIndex)
@@ -120,6 +123,30 @@ func (s *Server) ingested(e *island.Entry, ae *atom.Entry) error {
 		return nil
 	}
 	return err
+}
+
+// rebuildPosts derives the posts table from the blog feed's stored entries,
+// in the order they were first stored, so the first to claim a slug keeps
+// it. Runs at startup: after a switch of feeds, the new feed's entries may
+// all be stored already, and a poll brings nothing new.
+func (s *Server) rebuildPosts() error {
+	if err := s.store.ClearPosts(); err != nil {
+		return err
+	}
+	entries, err := s.store.FeedEntries(s.feedID)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		doc, err := atom.Parse([]byte(e.XML))
+		if err != nil || len(doc.Entries) != 1 {
+			return fmt.Errorf("stored entry %d: %v", e.N, err)
+		}
+		if err := s.ingested(e, doc.Entries[0]); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // target returns the post at one of our post URLs, for incoming WebMentions.

@@ -273,6 +273,56 @@ func TestAboutAndTheme(t *testing.T) {
 	blog.get("/static/", 404)
 }
 
+// Switching the blog to another feed and back shows the first feed's posts
+// again, although polling it brings nothing new.
+func TestFeedSwitch(t *testing.T) {
+	alice, bob := startFeed(t, "Alice"), startFeed(t, "Bob")
+	alice.post(t, `{"content":"Alice's post"}`)
+	bob.post(t, `{"content":"Bob's post"}`)
+	blog := startBlog(t, alice.url+"/feed.atom", nil)
+	blog.poll()
+
+	restart := func(feedURL string) {
+		cfg := *blog.srv.cfg
+		cfg.Blog.Feed = feedURL
+		srv, err := NewServer(&cfg, blog.srv.store)
+		if err != nil {
+			t.Fatal(err)
+		}
+		srv.now = func() time.Time { return blog.clock }
+		blog.srv = srv
+	}
+	posts := func() []string {
+		var out []string
+		for _, e := range blog.srv.store.mustPosts(t) {
+			out = append(out, e.Slug)
+		}
+		return out
+	}
+	restart(bob.url + "/feed.atom")
+	blog.poll()
+	if got := posts(); len(got) != 1 {
+		t.Fatalf("posts after switching to bob: %v", got)
+	}
+	restart(alice.url + "/feed.atom")
+	if got := posts(); len(got) != 1 {
+		t.Fatalf("posts after switching back to alice: %v", got)
+	}
+	p, err := blog.srv.store.PostBySlug("post-1")
+	if err != nil || p.AuthorURI != alice.url+"/" {
+		t.Errorf("post-1 after switching back: %+v, %v", p, err)
+	}
+}
+
+func (s *Store) mustPosts(t *testing.T) []*Post {
+	t.Helper()
+	posts, _, err := s.Posts(nil, pageSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return posts
+}
+
 func TestExcerpt(t *testing.T) {
 	long := strings.Repeat("word ", 100)
 	for _, c := range []struct {

@@ -42,30 +42,27 @@ func OpenStore(path string) (*Store, error) {
 	return &Store{Store: is, db: is.DB()}, nil
 }
 
-// SetBlogFeed makes feedID the blog's feed. Posts of another feed that was
-// the blog's before are dropped.
+// SetBlogFeed makes feedID the blog's feed.
 func (s *Store) SetBlogFeed(feedID int64) error {
-	tx, err := s.db.Begin()
+	_, err := s.db.Exec(`INSERT INTO blog (id, feed_id) VALUES (1, ?)
+		ON CONFLICT (id) DO UPDATE SET feed_id = excluded.feed_id`, feedID)
+	return err
+}
+
+// ClearPosts empties the posts table, before it is rebuilt.
+func (s *Store) ClearPosts() error {
+	_, err := s.db.Exec(`DELETE FROM posts`)
+	return err
+}
+
+// FeedEntries returns the entries that arrived through a feed, in the order
+// they were first stored.
+func (s *Store) FeedEntries(feedID int64) ([]*island.Entry, error) {
+	rows, err := s.db.Query(`SELECT `+island.EntryColumns+` FROM entries WHERE feed_id = ? ORDER BY n`, feedID)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer tx.Rollback()
-	var old int64
-	err = tx.QueryRow(`SELECT feed_id FROM blog`).Scan(&old)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return err
-	}
-	if err == nil && old == feedID {
-		return nil
-	}
-	if _, err := tx.Exec(`DELETE FROM posts`); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(`INSERT INTO blog (id, feed_id) VALUES (1, ?)
-		ON CONFLICT (id) DO UPDATE SET feed_id = excluded.feed_id`, feedID); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return island.ScanEntries(rows)
 }
 
 func (s *Store) BlogFeed() (int64, error) {
