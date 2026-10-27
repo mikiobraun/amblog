@@ -27,7 +27,7 @@ func TestLive(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !agg.srv.pushing(u.FeedID) {
+		if !agg.srv.island.Pushing(u.FeedID) {
 			t.Fatalf("no active subscription for %s", f.url)
 		}
 	}
@@ -83,11 +83,6 @@ func TestLive(t *testing.T) {
 	}
 	if len(thread.Entries) != 3 || blogReply == nil || blogReply.Title != "A blog reply" {
 		t.Errorf("thread after blog mention: %d entries, blog reply %+v", len(thread.Entries), blogReply)
-	}
-
-	// Links in replies carry no ranking.
-	if got := nofollow(`<p><a href="x">x</a></p>`); got != `<p><a rel="nofollow ugc" href="x">x</a></p>` {
-		t.Errorf("nofollow = %s", got)
 	}
 }
 

@@ -5,16 +5,11 @@ import (
 	"html/template"
 	"net/http"
 	"net/url"
-	"regexp"
 
 	"atomicmicro.blog/internal/atom"
+	"atomicmicro.blog/internal/island"
 	"atomicmicro.blog/internal/web"
 )
-
-// Entries come from arbitrary feeds, so their HTML is untrusted. Pages are
-// served with a CSP that forbids scripts, forms and plugins (sandbox), which
-// makes rendering that HTML as is safe enough for a plain page.
-const pageCSP = "default-src 'none'; img-src * data:; style-src 'unsafe-inline'; sandbox"
 
 type threadPage struct {
 	Aggregator string
@@ -32,7 +27,7 @@ type postView struct {
 	From       string // host the entry was fetched from, shown for unverified entries
 	Title      string
 	IsHTML     bool
-	HTML       template.HTML // untrusted, see pageCSP
+	HTML       template.HTML // untrusted, see island.PageCSP
 	Text       string
 	Published  string
 	Via        string
@@ -40,13 +35,13 @@ type postView struct {
 	Current    bool // the post the page is about
 }
 
-func (s *Server) postView(e *Entry, ae *atom.Entry) postView {
+func (s *Server) postView(e *island.Entry, ae *atom.Entry) postView {
 	p := postView{
 		URL:       s.postURL(e.N),
 		Verified:  e.Verified,
 		Title:     ae.Title,
 		Published: ae.Published,
-		Via:       linkHref(ae.Links, "via"),
+		Via:       island.LinkHref(ae.Links, "via"),
 	}
 	if ae.Author != nil {
 		p.AuthorName, p.AuthorURI = ae.Author.Name, ae.Author.URI
@@ -58,7 +53,7 @@ func (s *Server) postView(e *Entry, ae *atom.Entry) postView {
 		if ae.Content.Type == "html" {
 			body := ae.Content.Body
 			if ae.InReplyTo != nil {
-				body = nofollow(body)
+				body = island.Nofollow(body)
 			}
 			p.IsHTML, p.HTML = true, template.HTML(body)
 		} else {
@@ -68,15 +63,6 @@ func (s *Server) postView(e *Entry, ae *atom.Entry) postView {
 	return p
 }
 
-var anchorRe = regexp.MustCompile(`(?i)<a(\s|>)`)
-
-// nofollow marks every link in a reply as user content, so links in replies
-// carry no search ranking (see the spec, "Spam Control"). Our rel comes first,
-// and browsers use the first of duplicate attributes.
-func nofollow(html string) string {
-	return anchorRe.ReplaceAllString(html, `<a rel="nofollow ugc"$1`)
-}
-
 func (s *Server) renderHTML(w http.ResponseWriter, t *template.Template, data any) {
 	var buf bytes.Buffer
 	if err := t.Execute(&buf, data); err != nil {
@@ -84,7 +70,7 @@ func (s *Server) renderHTML(w http.ResponseWriter, t *template.Template, data an
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Content-Security-Policy", pageCSP)
+	w.Header().Set("Content-Security-Policy", island.PageCSP)
 	w.Write(buf.Bytes())
 }
 

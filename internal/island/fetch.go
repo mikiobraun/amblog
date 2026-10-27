@@ -1,7 +1,6 @@
-package amagg
+package island
 
 import (
-	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -14,10 +13,10 @@ import (
 	"atomicmicro.blog/internal/atom"
 )
 
-const maxFetchSize = 10 << 20
+const MaxFetchSize = 10 << 20
 
-// response is a fetched HTTP response, body included.
-type response struct {
+// Response is a fetched HTTP response, body included.
+type Response struct {
 	Status       int
 	ContentType  string
 	ETag         string
@@ -25,9 +24,9 @@ type response struct {
 	Body         []byte
 }
 
-// fetch GETs url with the given extra headers. Any status is returned as is;
-// only transport errors are errors. Bodies larger than maxFetchSize fail.
-func fetch(client *http.Client, url string, header http.Header) (*response, error) {
+// Fetch GETs url with the given extra headers. Any status is returned as is;
+// only transport errors are errors. Bodies larger than MaxFetchSize fail.
+func Fetch(client *http.Client, url string, header http.Header) (*Response, error) {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
@@ -40,14 +39,14 @@ func fetch(client *http.Client, url string, header http.Header) (*response, erro
 		return nil, err
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxFetchSize+1))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, MaxFetchSize+1))
 	if err != nil {
 		return nil, fmt.Errorf("GET %s: %w", url, err)
 	}
-	if len(body) > maxFetchSize {
-		return nil, fmt.Errorf("GET %s: response larger than %d bytes", url, maxFetchSize)
+	if len(body) > MaxFetchSize {
+		return nil, fmt.Errorf("GET %s: response larger than %d bytes", url, MaxFetchSize)
 	}
-	return &response{
+	return &Response{
 		Status:       resp.StatusCode,
 		ContentType:  resp.Header.Get("Content-Type"),
 		ETag:         resp.Header.Get("ETag"),
@@ -58,11 +57,11 @@ func fetch(client *http.Client, url string, header http.Header) (*response, erro
 
 var acceptFeed = http.Header{"Accept": {atom.MediaType + ", text/html;q=0.5"}}
 
-// discoverFeed resolves a URL that is either an Atom feed or an HTML page
+// DiscoverFeed resolves a URL that is either an Atom feed or an HTML page
 // linking one (<link rel="alternate" type="application/atom+xml">), and
 // returns the feed's URL and contents.
-func discoverFeed(client *http.Client, pageURL string) (feedURL string, f *atom.Feed, err error) {
-	resp, err := fetch(client, pageURL, acceptFeed)
+func DiscoverFeed(client *http.Client, pageURL string) (feedURL string, f *atom.Feed, err error) {
+	resp, err := Fetch(client, pageURL, acceptFeed)
 	if err != nil {
 		return "", nil, err
 	}
@@ -85,7 +84,7 @@ func discoverFeed(client *http.Client, pageURL string) (feedURL string, f *atom.
 		return "", nil, fmt.Errorf("%s links a bad feed URL %q", pageURL, href)
 	}
 	feedURL = base.ResolveReference(ref).String()
-	resp, err = fetch(client, feedURL, acceptFeed)
+	resp, err = Fetch(client, feedURL, acceptFeed)
 	if err != nil {
 		return "", nil, err
 	}
@@ -128,8 +127,8 @@ func hasToken(list, token string) bool {
 	return false
 }
 
-// checkFetchURL accepts absolute http(s) URLs only.
-func checkFetchURL(s string) (*url.URL, error) {
+// CheckFetchURL accepts absolute http(s) URLs only.
+func CheckFetchURL(s string) (*url.URL, error) {
 	u, err := url.Parse(s)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return nil, fmt.Errorf("%q is not an absolute http(s) URL", s)
@@ -137,31 +136,7 @@ func checkFetchURL(s string) (*url.URL, error) {
 	return u, nil
 }
 
-// checkIdentityURI validates and normalizes an author URI used as identity:
-// absolute, no query or fragment, HTTPS unless on a loopback host (for
-// development). An empty path becomes "/", so "https://miki.one" and
-// "https://miki.one/" are the same identity.
-func checkIdentityURI(s string) (string, error) {
-	u, err := url.Parse(s)
-	if err != nil {
-		return "", fmt.Errorf("author uri %q: %w", s, err)
-	}
-	if u.Scheme != "http" && u.Scheme != "https" || u.Host == "" {
-		return "", fmt.Errorf("author uri %q is not an absolute http(s) URL", s)
-	}
-	if u.RawQuery != "" || u.Fragment != "" {
-		return "", fmt.Errorf("author uri %q must not have a query or fragment", s)
-	}
-	if u.Scheme != "https" && !isLoopback(u.Hostname()) {
-		return "", fmt.Errorf("author uri %q must use https", s)
-	}
-	if u.Path == "" {
-		u.Path = "/"
-	}
-	return u.String(), nil
-}
-
-func isLoopback(host string) bool {
+func IsLoopback(host string) bool {
 	if host == "localhost" {
 		return true
 	}
@@ -169,12 +144,25 @@ func isLoopback(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-// noRedirects makes a client return redirect responses instead of following
-// them, so a login challenge must be served under the identity URL itself.
-func noRedirects(c *http.Client) *http.Client {
-	nc := *c
-	nc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	return &nc
+// LinkHref returns the href of the first link with the given rel; a link
+// without rel counts as alternate.
+func LinkHref(links []atom.Link, rel string) string {
+	for _, l := range links {
+		if l.Rel == rel || (l.Rel == "" && rel == "alternate") {
+			return l.Href
+		}
+	}
+	return ""
 }
 
-var errChallengeMismatch = errors.New("challenge not found under the identity URL")
+func resolve(base, ref string) (string, error) {
+	b, err := url.Parse(base)
+	if err != nil {
+		return "", err
+	}
+	r, err := url.Parse(ref)
+	if err != nil {
+		return "", err
+	}
+	return b.ResolveReference(r).String(), nil
+}

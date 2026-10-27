@@ -6,248 +6,71 @@ import (
 	"strings"
 	"time"
 
+	"atomicmicro.blog/internal/island"
 	"atomicmicro.blog/internal/paging"
-	_ "modernc.org/sqlite"
 )
 
 var (
-	ErrNotFound      = errors.New("not found")
+	ErrNotFound      = island.ErrNotFound
 	ErrInvalidInvite = errors.New("invalid or used invite code")
 )
 
-var schema = []string{
-	`PRAGMA journal_mode=WAL`,
-	`PRAGMA busy_timeout=5000`,
-	`PRAGMA foreign_keys=ON`,
-	// Feeds the aggregator polls: members' own feeds and followed feeds.
-	`CREATE TABLE IF NOT EXISTS feeds (
-		id            INTEGER PRIMARY KEY,
-		url           TEXT NOT NULL UNIQUE,
-		atom_id       TEXT NOT NULL DEFAULT '',
-		title         TEXT NOT NULL DEFAULT '',
-		html_url      TEXT NOT NULL DEFAULT '',
-		etag          TEXT NOT NULL DEFAULT '',
-		last_modified TEXT NOT NULL DEFAULT '',
-		last_seen     TEXT NOT NULL DEFAULT '', -- newest entry updated seen, RFC 3339 UTC
-		interval_s    INTEGER NOT NULL,
-		next_poll     TEXT NOT NULL,
-		last_error    TEXT NOT NULL DEFAULT '',
-		failures      INTEGER NOT NULL DEFAULT 0
-	)`,
-	`CREATE TABLE IF NOT EXISTS users (
-		id         INTEGER PRIMARY KEY,
-		name       TEXT NOT NULL UNIQUE,
-		author_uri TEXT NOT NULL UNIQUE,
-		feed_id    INTEGER NOT NULL REFERENCES feeds (id),
-		joined     TEXT NOT NULL
-	)`,
-	`CREATE TABLE IF NOT EXISTS tokens (
-		hash    TEXT PRIMARY KEY,
-		user_id INTEGER NOT NULL REFERENCES users (id),
-		created TEXT NOT NULL
-	)`,
-	// Feed reader credentials: HTTP Basic passwords, one per reader.
-	`CREATE TABLE IF NOT EXISTS readers (
-		id      INTEGER PRIMARY KEY,
-		user_id INTEGER NOT NULL REFERENCES users (id),
-		name    TEXT NOT NULL,
-		hash    TEXT NOT NULL UNIQUE,
-		created TEXT NOT NULL
-	)`,
-	`CREATE TABLE IF NOT EXISTS invites (
-		hash    TEXT PRIMARY KEY,
-		created TEXT NOT NULL,
-		used_by INTEGER REFERENCES users (id)
-	)`,
-	`CREATE TABLE IF NOT EXISTS follows (
-		user_id INTEGER NOT NULL REFERENCES users (id),
-		feed_id INTEGER NOT NULL REFERENCES feeds (id),
-		created TEXT NOT NULL,
-		PRIMARY KEY (user_id, feed_id)
-	)`,
-	// Ingested entries. n is the local post number (/posts/{n}); id the Atom
-	// entry id. feed_id is the feed the entry arrived through, NULL for entries
-	// that came another way (e.g. a fetched parent); only entries with a feed
-	// appear in timelines. xml is the entry as received (author filled in if
-	// it had none).
-	`CREATE TABLE IF NOT EXISTS entries (
-		n               INTEGER PRIMARY KEY,
-		id              TEXT NOT NULL UNIQUE,
-		author_uri      TEXT NOT NULL,
-		fetched_from    TEXT NOT NULL,
-		feed_id         INTEGER REFERENCES feeds (id),
-		in_reply_to_ref TEXT NOT NULL,
-		sort_time       TEXT NOT NULL, -- published (or updated), RFC 3339 UTC
-		updated         TEXT NOT NULL, -- RFC 3339 UTC
-		verified        INTEGER NOT NULL,
-		xml             TEXT NOT NULL,
-		received        TEXT NOT NULL
-	)`,
-	`CREATE INDEX IF NOT EXISTS entries_timeline ON entries (feed_id, sort_time, n)`,
-	`CREATE INDEX IF NOT EXISTS entries_thread ON entries (in_reply_to_ref)`,
-	// WebSub subscriptions, one per feed. state is "pending" until the hub has
-	// verified the intent, then "active" until expires.
-	`CREATE TABLE IF NOT EXISTS subscriptions (
-		feed_id   INTEGER PRIMARY KEY REFERENCES feeds (id),
-		hub       TEXT NOT NULL,
-		topic     TEXT NOT NULL,
-		secret    TEXT NOT NULL,
-		state     TEXT NOT NULL,
-		requested TEXT NOT NULL,
-		expires   TEXT NOT NULL DEFAULT ''
-	)`,
+// amagg's tables, next to the island's feeds, entries and subscriptions.
+var schema = island.Schema{
+	Tables: []string{
+		`CREATE TABLE IF NOT EXISTS users (
+			id         INTEGER PRIMARY KEY,
+			name       TEXT NOT NULL UNIQUE,
+			author_uri TEXT NOT NULL UNIQUE,
+			feed_id    INTEGER NOT NULL REFERENCES feeds (id),
+			joined     TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS tokens (
+			hash    TEXT PRIMARY KEY,
+			user_id INTEGER NOT NULL REFERENCES users (id),
+			created TEXT NOT NULL
+		)`,
+		// Feed reader credentials: HTTP Basic passwords, one per reader.
+		`CREATE TABLE IF NOT EXISTS readers (
+			id      INTEGER PRIMARY KEY,
+			user_id INTEGER NOT NULL REFERENCES users (id),
+			name    TEXT NOT NULL,
+			hash    TEXT NOT NULL UNIQUE,
+			created TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS invites (
+			hash    TEXT PRIMARY KEY,
+			created TEXT NOT NULL,
+			used_by INTEGER REFERENCES users (id)
+		)`,
+		`CREATE TABLE IF NOT EXISTS follows (
+			user_id INTEGER NOT NULL REFERENCES users (id),
+			feed_id INTEGER NOT NULL REFERENCES feeds (id),
+			created TEXT NOT NULL,
+			PRIMARY KEY (user_id, feed_id)
+		)`,
+	},
+	// Polled: members' own feeds and feeds someone follows.
+	WantedFeeds: `SELECT feed_id FROM users UNION SELECT feed_id FROM follows`,
+	MemberFeeds: `SELECT feed_id FROM users`,
 }
 
+// Store is the island's store plus members, tokens, readers, invites and
+// follows.
 type Store struct {
+	*island.Store
 	db *sql.DB
 }
 
 func OpenStore(path string) (*Store, error) {
-	db, err := sql.Open("sqlite", path)
+	is, err := island.OpenStore(path, schema)
 	if err != nil {
 		return nil, err
 	}
-	// One connection: SQLite has a single writer anyway, and this avoids
-	// SQLITE_BUSY between our own connections.
-	db.SetMaxOpenConns(1)
-	for _, stmt := range schema {
-		if _, err := db.Exec(stmt); err != nil {
-			db.Close()
-			return nil, err
-		}
-	}
-	return &Store{db: db}, nil
+	return &Store{Store: is, db: is.DB()}, nil
 }
-
-func (s *Store) Close() error { return s.db.Close() }
 
 func nowString() string { return paging.FormatTime(time.Now()) }
-
-// --- feeds ---
-
-type Feed struct {
-	ID           int64
-	URL          string
-	AtomID       string
-	Title        string
-	HTMLURL      string
-	ETag         string
-	LastModified string
-	LastSeen     string
-	Interval     time.Duration
-	NextPoll     string
-	LastError    string
-	Failures     int
-}
-
-const feedColumns = `id, url, atom_id, title, html_url, etag, last_modified, last_seen, interval_s, next_poll, last_error, failures`
-
-func scanFeed(row interface{ Scan(...any) error }) (*Feed, error) {
-	var f Feed
-	var interval int64
-	err := row.Scan(&f.ID, &f.URL, &f.AtomID, &f.Title, &f.HTMLURL, &f.ETag, &f.LastModified, &f.LastSeen,
-		&interval, &f.NextPoll, &f.LastError, &f.Failures)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
-	f.Interval = time.Duration(interval) * time.Second
-	return &f, err
-}
-
-// AddFeed returns the feed with the given URL, creating it if needed.
-func (s *Store) AddFeed(url string, interval time.Duration, nextPoll string) (*Feed, error) {
-	_, err := s.db.Exec(`INSERT INTO feeds (url, interval_s, next_poll) VALUES (?, ?, ?) ON CONFLICT (url) DO NOTHING`,
-		url, int64(interval/time.Second), nextPoll)
-	if err != nil {
-		return nil, err
-	}
-	return scanFeed(s.db.QueryRow(`SELECT `+feedColumns+` FROM feeds WHERE url = ?`, url))
-}
-
-func (s *Store) GetFeed(id int64) (*Feed, error) {
-	return scanFeed(s.db.QueryRow(`SELECT `+feedColumns+` FROM feeds WHERE id = ?`, id))
-}
-
-// SaveFeed stores the feed's metadata and polling state.
-func (s *Store) SaveFeed(f *Feed) error {
-	_, err := s.db.Exec(`UPDATE feeds SET atom_id = ?, title = ?, html_url = ?, etag = ?, last_modified = ?,
-		last_seen = ?, interval_s = ?, next_poll = ?, last_error = ?, failures = ? WHERE id = ?`,
-		f.AtomID, f.Title, f.HTMLURL, f.ETag, f.LastModified, f.LastSeen,
-		int64(f.Interval/time.Second), f.NextPoll, f.LastError, f.Failures, f.ID)
-	return err
-}
-
-// DueFeeds returns feeds that someone follows or that belong to a member,
-// whose next poll is due at time t.
-func (s *Store) DueFeeds(t string, limit int) ([]*Feed, error) {
-	rows, err := s.db.Query(`SELECT `+feedColumns+` FROM feeds
-		WHERE next_poll <= ? AND (id IN (SELECT feed_id FROM users) OR id IN (SELECT feed_id FROM follows))
-		ORDER BY next_poll LIMIT ?`, t, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var feeds []*Feed
-	for rows.Next() {
-		f, err := scanFeed(rows)
-		if err != nil {
-			return nil, err
-		}
-		feeds = append(feeds, f)
-	}
-	return feeds, rows.Err()
-}
-
-// FeedWanted reports whether the feed is still polled: it belongs to a member
-// or someone follows it.
-func (s *Store) FeedWanted(feedID int64) (bool, error) {
-	var n int
-	err := s.db.QueryRow(`SELECT (SELECT COUNT(*) FROM users WHERE feed_id = ?) + (SELECT COUNT(*) FROM follows WHERE feed_id = ?)`,
-		feedID, feedID).Scan(&n)
-	return n > 0, err
-}
-
-// IsMemberFeed reports whether the feed is a member's own feed.
-func (s *Store) IsMemberFeed(feedID int64) (bool, error) {
-	var n int
-	err := s.db.QueryRow(`SELECT COUNT(*) FROM users WHERE feed_id = ?`, feedID).Scan(&n)
-	return n > 0, err
-}
-
-// --- WebSub subscriptions ---
-
-type Subscription struct {
-	FeedID    int64
-	Hub       string
-	Topic     string
-	Secret    string
-	State     string // "pending" or "active"
-	Requested string
-	Expires   string
-}
-
-func (s *Store) GetSubscription(feedID int64) (*Subscription, error) {
-	var sub Subscription
-	err := s.db.QueryRow(`SELECT feed_id, hub, topic, secret, state, requested, expires FROM subscriptions WHERE feed_id = ?`,
-		feedID).Scan(&sub.FeedID, &sub.Hub, &sub.Topic, &sub.Secret, &sub.State, &sub.Requested, &sub.Expires)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
-	return &sub, err
-}
-
-func (s *Store) PutSubscription(sub *Subscription) error {
-	_, err := s.db.Exec(`INSERT INTO subscriptions (feed_id, hub, topic, secret, state, requested, expires)
-		VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (feed_id) DO UPDATE SET hub = excluded.hub, topic = excluded.topic,
-		secret = excluded.secret, state = excluded.state, requested = excluded.requested, expires = excluded.expires`,
-		sub.FeedID, sub.Hub, sub.Topic, sub.Secret, sub.State, sub.Requested, sub.Expires)
-	return err
-}
-
-func (s *Store) DeleteSubscription(feedID int64) error {
-	_, err := s.db.Exec(`DELETE FROM subscriptions WHERE feed_id = ?`, feedID)
-	return err
-}
 
 // --- users, tokens, invites ---
 
@@ -410,16 +233,16 @@ func (s *Store) Unfollow(userID int64, feedURL string) error {
 	return nil
 }
 
-func (s *Store) Following(userID int64) ([]*Feed, error) {
-	rows, err := s.db.Query(`SELECT `+prefixed("f.", feedColumns)+` FROM feeds f
+func (s *Store) Following(userID int64) ([]*island.Feed, error) {
+	rows, err := s.db.Query(`SELECT `+prefixed("f.", island.FeedColumns)+` FROM feeds f
 		JOIN follows fo ON fo.feed_id = f.id WHERE fo.user_id = ? ORDER BY fo.created`, userID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var feeds []*Feed
+	var feeds []*island.Feed
 	for rows.Next() {
-		f, err := scanFeed(rows)
+		f, err := island.ScanFeed(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -428,101 +251,13 @@ func (s *Store) Following(userID int64) ([]*Feed, error) {
 	return feeds, rows.Err()
 }
 
-// --- entries ---
-
-type Entry struct {
-	N            int64
-	ID           string
-	AuthorURI    string
-	FetchedFrom  string
-	FeedID       sql.NullInt64
-	InReplyToRef string
-	SortTime     string
-	Updated      string
-	Verified     bool
-	XML          string
-	Received     string
-}
-
-const entryColumns = `n, id, author_uri, fetched_from, feed_id, in_reply_to_ref, sort_time, updated, verified, xml, received`
-
-func scanEntry(row interface{ Scan(...any) error }) (*Entry, error) {
-	var e Entry
-	err := row.Scan(&e.N, &e.ID, &e.AuthorURI, &e.FetchedFrom, &e.FeedID, &e.InReplyToRef,
-		&e.SortTime, &e.Updated, &e.Verified, &e.XML, &e.Received)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
-	return &e, err
-}
-
-func (s *Store) EntryByID(id string) (*Entry, error) {
-	return scanEntry(s.db.QueryRow(`SELECT `+entryColumns+` FROM entries WHERE id = ?`, id))
-}
-
-func (s *Store) EntryByN(n int64) (*Entry, error) {
-	return scanEntry(s.db.QueryRow(`SELECT `+entryColumns+` FROM entries WHERE n = ?`, n))
-}
-
-// InsertEntry stores a new entry and sets e.N. If an entry with that id
-// exists (another ingest path got there first), it stores nothing and
-// returns inserted = false.
-func (s *Store) InsertEntry(e *Entry) (inserted bool, err error) {
-	res, err := s.db.Exec(`INSERT INTO entries (id, author_uri, fetched_from, feed_id, in_reply_to_ref,
-		sort_time, updated, verified, xml, received) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT (id) DO NOTHING`,
-		e.ID, e.AuthorURI, e.FetchedFrom, e.FeedID, e.InReplyToRef, e.SortTime, e.Updated, e.Verified, e.XML, e.Received)
-	if err != nil {
-		return false, err
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return false, nil
-	}
-	e.N, err = res.LastInsertId()
-	return err == nil, err
-}
-
-// ReplaceEntry overwrites a stored entry (by n) with a newer version.
-func (s *Store) ReplaceEntry(e *Entry) error {
-	_, err := s.db.Exec(`UPDATE entries SET author_uri = ?, fetched_from = ?, feed_id = ?, in_reply_to_ref = ?,
-		sort_time = ?, updated = ?, verified = ?, xml = ?, received = ? WHERE n = ?`,
-		e.AuthorURI, e.FetchedFrom, e.FeedID, e.InReplyToRef, e.SortTime, e.Updated, e.Verified, e.XML, e.Received, e.N)
-	return err
-}
-
-// CountReplies returns the number of direct replies to the entry with the
-// given Atom id.
-func (s *Store) CountReplies(id string) (int, error) {
-	var n int
-	err := s.db.QueryRow(`SELECT COUNT(*) FROM entries WHERE in_reply_to_ref = ?`, id).Scan(&n)
-	return n, err
-}
-
-// Replies returns the direct replies to the entry with the given Atom id,
-// oldest first.
-func (s *Store) Replies(id string) ([]*Entry, error) {
-	rows, err := s.db.Query(`SELECT `+entryColumns+` FROM entries WHERE in_reply_to_ref = ?
-		ORDER BY sort_time, n`, id)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var entries []*Entry
-	for rows.Next() {
-		e, err := scanEntry(rows)
-		if err != nil {
-			return nil, err
-		}
-		entries = append(entries, e)
-	}
-	return entries, rows.Err()
-}
+// --- timelines ---
 
 // Timeline returns up to limit entries, newest first by sort_time, from the
 // island (all members' feeds) plus, if userID != 0, that user's follows.
 // next is the cursor for the following page, or nil.
-func (s *Store) Timeline(userID int64, before *paging.Cursor, limit int) (entries []*Entry, next *paging.Cursor, err error) {
-	query := `SELECT ` + entryColumns + ` FROM entries WHERE feed_id IN (SELECT feed_id FROM users`
+func (s *Store) Timeline(userID int64, before *paging.Cursor, limit int) (entries []*island.Entry, next *paging.Cursor, err error) {
+	query := `SELECT ` + island.EntryColumns + ` FROM entries WHERE feed_id IN (SELECT feed_id FROM users`
 	args := []any{}
 	if userID != 0 {
 		query += ` UNION SELECT feed_id FROM follows WHERE user_id = ?`
@@ -540,15 +275,7 @@ func (s *Store) Timeline(userID int64, before *paging.Cursor, limit int) (entrie
 	if err != nil {
 		return nil, nil, err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		e, err := scanEntry(rows)
-		if err != nil {
-			return nil, nil, err
-		}
-		entries = append(entries, e)
-	}
-	if err := rows.Err(); err != nil {
+	if entries, err = island.ScanEntries(rows); err != nil {
 		return nil, nil, err
 	}
 	if len(entries) > limit {

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"atomicmicro.blog/internal/atom"
+	"atomicmicro.blog/internal/island"
 	"atomicmicro.blog/internal/paging"
 	"atomicmicro.blog/internal/web"
 )
@@ -84,7 +85,7 @@ func (s *Server) serveTimeline(w http.ResponseWriter, r *http.Request, userID in
 	if next != nil {
 		f.Links = append(f.Links, atom.Link{Rel: "next", Href: pageURL(next), Type: atom.MediaType})
 	}
-	feeds := map[int64]*Feed{}
+	feeds := map[int64]*island.Feed{}
 	for _, e := range entries {
 		ae, err := s.reserve(e, feeds)
 		if err != nil {
@@ -119,13 +120,13 @@ func (s *Server) writeAtom(w http.ResponseWriter, r *http.Request, f *atom.Feed)
 // URL as alternate, via pointing where the entry came from, and atom:source
 // with the original feed. None of these are signed. feeds caches feed rows
 // across calls.
-func (s *Server) reserve(e *Entry, feeds map[int64]*Feed) (*atom.Entry, error) {
+func (s *Server) reserve(e *island.Entry, feeds map[int64]*island.Feed) (*atom.Entry, error) {
 	doc, err := atom.Parse([]byte(e.XML))
 	if err != nil || len(doc.Entries) != 1 {
 		return nil, fmt.Errorf("stored entry %d: %v", e.N, err)
 	}
 	ae := doc.Entries[0]
-	via := linkHref(ae.Links, "alternate")
+	via := island.LinkHref(ae.Links, "alternate")
 	if via == "" {
 		via = e.FetchedFrom
 	}
@@ -162,7 +163,7 @@ func (s *Server) reserve(e *Entry, feeds map[int64]*Feed) (*atom.Entry, error) {
 	return ae, nil
 }
 
-func (s *Server) entryFromPath(w http.ResponseWriter, r *http.Request) (*Entry, bool) {
+func (s *Server) entryFromPath(w http.ResponseWriter, r *http.Request) (*island.Entry, bool) {
 	n, err := strconv.ParseInt(r.PathValue("n"), 10, 64)
 	if err != nil {
 		http.NotFound(w, r)
@@ -190,8 +191,8 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	w.Header().Set("Link", "<"+s.webmentionURL()+`>; rel="webmention"`)
-	feeds := map[int64]*Feed{}
+	w.Header().Set("Link", "<"+s.island.WebMentionURL()+`>; rel="webmention"`)
+	feeds := map[int64]*island.Feed{}
 	if strings.Contains(r.Header.Get("Accept"), atom.MediaType) {
 		ae, err := s.reserve(e, feeds)
 		if err != nil {
@@ -207,20 +208,20 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 		w.Write(body)
 		return
 	}
-	items, err := s.thread(e)
+	items, err := s.island.Thread(e)
 	if err != nil {
 		web.ServerError(w, err)
 		return
 	}
-	page := threadPage{Aggregator: s.cfg.Aggregator.Name, ThreadURL: s.postURL(e.N) + "/thread.atom", WebMention: s.webmentionURL()}
+	page := threadPage{Aggregator: s.cfg.Aggregator.Name, ThreadURL: s.postURL(e.N) + "/thread.atom", WebMention: s.island.WebMentionURL()}
 	for _, it := range items {
-		ae, err := s.reserve(it.entry, feeds)
+		ae, err := s.reserve(it.Entry, feeds)
 		if err != nil {
 			web.ServerError(w, err)
 			return
 		}
-		p := s.postView(it.entry, ae)
-		p.Depth, p.Current = min(it.depth, 8), it.entry.N == e.N
+		p := s.postView(it.Entry, ae)
+		p.Depth, p.Current = min(it.Depth, 8), it.Entry.N == e.N
 		if p.Current {
 			page.Title = p.AuthorName
 			if p.Title != "" {
@@ -230,6 +231,44 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 		page.Posts = append(page.Posts, p)
 	}
 	s.renderHTML(w, postTemplate, page)
+}
+
+// handleThread serves the whole conversation around a post as an Atom feed,
+// in conversation order.
+func (s *Server) handleThread(w http.ResponseWriter, r *http.Request) {
+	if !s.checkPublic(w, r, true) {
+		return
+	}
+	e, ok := s.entryFromPath(w, r)
+	if !ok {
+		return
+	}
+	items, err := s.island.Thread(e)
+	if err != nil {
+		web.ServerError(w, err)
+		return
+	}
+	selfURL := s.postURL(e.N) + "/thread.atom"
+	f := &atom.Feed{
+		ID:      selfURL,
+		Title:   "Thread · " + s.cfg.Aggregator.Name,
+		Updated: emptyFeedUpdated,
+		Links: []atom.Link{
+			{Rel: "self", Href: selfURL, Type: atom.MediaType},
+			{Rel: "alternate", Href: s.postURL(e.N), Type: "text/html"},
+		},
+	}
+	feeds := map[int64]*island.Feed{}
+	for _, it := range items {
+		ae, err := s.reserve(it.Entry, feeds)
+		if err != nil {
+			web.ServerError(w, err)
+			return
+		}
+		f.Entries = append(f.Entries, ae)
+		f.Updated = max(f.Updated, it.Entry.Updated)
+	}
+	s.writeAtom(w, r, f)
 }
 
 func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {

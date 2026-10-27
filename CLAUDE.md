@@ -27,7 +27,8 @@ internal/web/              shared HTTP helpers: JSON, CORS, bearer tokens
 internal/webmention/       WebMention: discovery, sending with retries, link checks, per-host rate limit
 internal/websub/           WebSub: content signature, lease limits (hub in amfeed, subscriber in amagg)
 internal/amfeed/           config (TOML), SQLite store, HTTP server, HTML pages, init, content folder sync
-internal/amagg/            config, store, login (challenge), fetch/discovery, ingest, poll, follow, timeline, HTML
+internal/island/           what every island shares: feeds/entries/subscriptions store, fetch/discovery, ingest, poll, WebSub subscriber, WebMentions (receive, forward), threads
+internal/amagg/            island + members: config, store (users, tokens, readers, invites, follows), login (challenge), follow, timeline, HTML
 amfront/                   Vue 3 + Vite + TypeScript static client
   src/lib/atom.ts          Atom parsing (mirrors internal/atom)
   src/lib/sign.ts          signing input + Web Crypto verification (mirrors internal/sign)
@@ -105,15 +106,17 @@ The `Makefile` wraps the common ones: `make build`, `make test`, `make check` (g
 - **Bearer tokens only, never cookies.** That is what makes `Access-Control-Allow-Origin: *` safe on every endpoint. Don't introduce cookie auth.
 - Tokens are stored as SHA-256 hashes. The first admin token comes from `amfeed init` (local DB access); admin tokens can create posting tokens.
 
-### amagg ingest
+### Island ingest (amagg, ampress)
+- `internal/island` owns following feeds and ingest; amagg and ampress add their own tables and pages. An app tells the island which feeds it wants and which are members' (`island.Schema`, SQL selecting feed ids) and which entry a URL of its own shows (`Options.Target`, for WebMention targets).
 - Every ingest path goes through `ingest()`: verify if possible, else unverified + `fetched_from`. Replacement only via `mayReplace` (verified needs same author; unverified needs unverified + same `fetched_from`). Never add a path that writes entries around it.
 - Entries are keyed by Atom `id`; `feed_id` NULL means "not from a polled feed" (e.g. a fetched parent) and keeps the entry out of timelines.
 - Stored times (`sort_time`, `updated`, `last_seen`) are normalized to RFC 3339 UTC seconds so they compare as strings; `last_seen` never passes "now".
 - Login fetches the challenge **without redirects**; identity URIs must be HTTPS except on loopback hosts.
-- amagg post pages render untrusted feed HTML under a sandboxing CSP (`pageCSP`); keep that header on every HTML response.
+- Post pages render untrusted feed HTML under a sandboxing CSP (`island.PageCSP`); keep that header on every HTML response.
 - Several paths can ingest the same entry at once (WebSub push, WebMention, poll). `InsertEntry` is insert-or-nothing; on a lost race `ingest` falls through to the replacement rule. Don't reintroduce check-then-insert.
-- Feed polling state is updated under `feedMu` (polls and pushes both write it); `pollFeed` re-reads the feed inside the lock.
-- Background work (WebMentions, pushes, forwarding) goes through `background()`; tests wait for it with `wait()` (amagg) / `Wait()` (amfeed) instead of sleeping.
+- Feed polling state is updated under `feedMu` (polls and pushes both write it); `PollFeed` re-reads the feed inside the lock.
+- Background work (WebMentions, pushes, forwarding) goes through `background()`; tests wait for it with `wait()` (amagg, i.e. `island.Wait()`) / `Wait()` (amfeed) instead of sleeping.
+- amagg's clock (`srv.now`) is also the island's: tests set it on the server.
 
 ### Threads and replies (for amagg)
 - Match threads by `thr:in-reply-to` **`ref`** (the Atom id), never by `href` — each aggregator serves posts under its own URLs.

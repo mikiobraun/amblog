@@ -1,4 +1,4 @@
-package amagg
+package island
 
 import (
 	"database/sql"
@@ -11,7 +11,7 @@ import (
 	"atomicmicro.blog/internal/paging"
 )
 
-// origin is where an entry came from: the URL the aggregator fetched it from,
+// origin is where an entry came from: the URL the island fetched it from,
 // and the feed it arrived through (nil for entries fetched another way).
 type origin struct {
 	fetchedFrom string
@@ -25,7 +25,7 @@ type origin struct {
 // "Ingest and Verification"): verify if possible, record the result, and
 // replace a stored version only if the new one is at least as trustworthy.
 // It reports whether anything changed.
-func (s *Server) ingest(e *atom.Entry, o origin) (changed bool, err error) {
+func (is *Island) ingest(e *atom.Entry, o origin) (changed bool, err error) {
 	if e.ID == "" {
 		log.Printf("ingest %s: skipping entry without id", o.fetchedFrom)
 		return false, nil
@@ -41,7 +41,7 @@ func (s *Server) ingest(e *atom.Entry, o origin) (changed bool, err error) {
 	}
 
 	// Verify before filling in a missing author: signed entries carry their own.
-	verified := s.keys.Verify(e) == nil
+	verified := is.keys.Verify(e) == nil
 	fillAuthor(e, o)
 
 	data, err := atom.MarshalEntry(e)
@@ -56,7 +56,7 @@ func (s *Server) ingest(e *atom.Entry, o origin) (changed bool, err error) {
 		Updated:     updated,
 		Verified:    verified,
 		XML:         string(data),
-		Received:    paging.FormatTime(s.now()),
+		Received:    paging.FormatTime(is.Now()),
 	}
 	if o.feed != nil {
 		in.FeedID = sql.NullInt64{Int64: o.feed.ID, Valid: true}
@@ -65,9 +65,9 @@ func (s *Server) ingest(e *atom.Entry, o origin) (changed bool, err error) {
 		in.InReplyToRef = e.InReplyTo.Ref
 	}
 
-	stored, err := s.store.EntryByID(e.ID)
+	stored, err := is.Store.EntryByID(e.ID)
 	if err == ErrNotFound {
-		inserted, err := s.store.InsertEntry(in)
+		inserted, err := is.Store.InsertEntry(in)
 		if err != nil {
 			return false, err
 		}
@@ -75,14 +75,14 @@ func (s *Server) ingest(e *atom.Entry, o origin) (changed bool, err error) {
 			// A new reply whose parent we don't know: fetch the parent once,
 			// so the thread has its context.
 			if e.InReplyTo != nil && e.InReplyTo.Ref != "" {
-				s.fetchParent(e.InReplyTo.Ref, e.InReplyTo.Href, o.depth+1)
+				is.fetchParent(e.InReplyTo.Ref, e.InReplyTo.Href, o.depth+1)
 			}
-			s.forwardReply(e, o)
+			is.forwardReply(e, o)
 			return true, nil
 		}
 		// Another ingest path (a push, a WebMention) stored it meanwhile:
 		// treat this copy as a newer version of that one.
-		stored, err = s.store.EntryByID(e.ID)
+		stored, err = is.Store.EntryByID(e.ID)
 	}
 	if err != nil {
 		return false, err
@@ -102,11 +102,11 @@ func (s *Server) ingest(e *atom.Entry, o origin) (changed bool, err error) {
 	if !in.FeedID.Valid {
 		in.FeedID = stored.FeedID // e.g. a parent fetched earlier keeps its place in timelines
 	}
-	if err := s.store.ReplaceEntry(in); err != nil {
+	if err := is.Store.ReplaceEntry(in); err != nil {
 		return false, err
 	}
 	if in.XML != stored.XML {
-		s.forwardReply(e, o) // an edit or delete
+		is.forwardReply(e, o) // an edit or delete
 	}
 	return true, nil
 }

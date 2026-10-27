@@ -4,6 +4,7 @@
 package amagg
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/url"
@@ -12,27 +13,22 @@ import (
 	"sync"
 	"time"
 
-	"atomicmicro.blog/internal/sign"
+	"atomicmicro.blog/internal/island"
 	"atomicmicro.blog/internal/web"
-	"atomicmicro.blog/internal/webmention"
 )
 
+// Server is amagg's own part: members, login, follows, timelines and pages.
+// Following feeds, ingest, WebSub and WebMentions are the island's.
 type Server struct {
 	cfg     *Config
 	store   *Store
+	island  *island.Island
 	client  *http.Client
-	keys    *sign.KeyCache
 	origin  string // scheme://host of the base URL, bound into login challenges
 	basicOK bool   // HTTP Basic allowed: base URL is https, or on a loopback host
 	now     func() time.Time
 	handler http.Handler
 	proxy   proxyCache
-	limiter *webmention.Limiter
-	bg      sync.WaitGroup // background work, see wait
-
-	// feedMu serializes updates of a feed's polling state, which polls and
-	// WebSub pushes both make.
-	feedMu sync.Mutex
 
 	mu     sync.Mutex
 	logins map[string]pendingLogin // by challenge token
@@ -43,18 +39,26 @@ func NewServer(cfg *Config, store *Store) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	client := &http.Client{Timeout: 20 * time.Second}
 	s := &Server{
 		cfg:     cfg,
 		store:   store,
-		client:  client,
-		keys:    sign.NewKeyCache(client),
 		origin:  u.Scheme + "://" + u.Host,
-		basicOK: u.Scheme == "https" || isLoopback(u.Hostname()),
+		basicOK: u.Scheme == "https" || island.IsLoopback(u.Hostname()),
 		now:     time.Now,
 		logins:  map[string]pendingLogin{},
-		limiter: webmention.NewLimiter(cfg.WebMention.PerHostPerHour),
 	}
+	p := cfg.Polling
+	s.island = island.New(island.Options{
+		BaseURL:         cfg.Aggregator.BaseURL,
+		DefaultInterval: p.DefaultInterval.Duration,
+		MinInterval:     p.MinInterval.Duration,
+		MaxInterval:     p.MaxInterval.Duration,
+		PerHostPerHour:  cfg.WebMention.PerHostPerHour,
+		BlockHosts:      cfg.WebMention.BlockHosts,
+		Target:          s.target,
+	}, store.Store)
+	s.island.Now = func() time.Time { return s.now() } // one clock, which tests set
+	s.client = s.island.Client
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.handleHome)
@@ -62,9 +66,9 @@ func NewServer(cfg *Config, store *Store) (*Server, error) {
 	mux.HandleFunc("GET /timeline/{file}", s.handleUserTimeline)
 	mux.HandleFunc("GET /posts/{n}", s.handlePost)
 	mux.HandleFunc("GET /posts/{n}/thread.atom", s.handleThread)
-	mux.HandleFunc("POST /webmention", s.handleWebMention)
-	mux.HandleFunc("GET /websub/{feed}", s.handleWebSubVerify)
-	mux.HandleFunc("POST /websub/{feed}", s.handleWebSubPush)
+	mux.HandleFunc("POST /webmention", s.island.HandleWebMention)
+	mux.HandleFunc("GET /websub/{feed}", s.island.HandleWebSubVerify)
+	mux.HandleFunc("POST /websub/{feed}", s.island.HandleWebSubPush)
 	mux.HandleFunc("POST /api/login", s.handleLogin)
 	mux.HandleFunc("POST /api/login/verify", s.handleLoginVerify)
 	mux.HandleFunc("POST /api/follow", s.requireUser(s.handleFollow))
@@ -81,20 +85,35 @@ func NewServer(cfg *Config, store *Store) (*Server, error) {
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.handler.ServeHTTP(w, r) }
 
+// RunPoller polls followed feeds until ctx is cancelled.
+func (s *Server) RunPoller(ctx context.Context) { s.island.RunPoller(ctx) }
+
+// PollDue polls the feeds whose next poll is due.
+func (s *Server) PollDue() { s.island.PollDue() }
+
 // wait blocks until background work (received WebMentions, forwarded
 // replies) is done.
-func (s *Server) wait() { s.bg.Wait() }
-
-func (s *Server) background(f func()) {
-	s.bg.Add(1)
-	go func() {
-		defer s.bg.Done()
-		f()
-	}()
-}
+func (s *Server) wait() { s.island.Wait() }
 
 func (s *Server) postURL(n int64) string {
 	return s.cfg.Aggregator.BaseURL + "/posts/" + strconv.FormatInt(n, 10)
+}
+
+// target returns the entry at one of our post URLs, for incoming WebMentions.
+func (s *Server) target(u string) (*island.Entry, bool, error) {
+	rest, ok := strings.CutPrefix(u, s.cfg.Aggregator.BaseURL+"/posts/")
+	if !ok {
+		return nil, false, nil
+	}
+	n, err := strconv.ParseInt(rest, 10, 64)
+	if err != nil || n <= 0 {
+		return nil, false, nil
+	}
+	e, err := s.store.EntryByN(n)
+	if errors.Is(err, island.ErrNotFound) {
+		return nil, false, nil
+	}
+	return e, err == nil, err
 }
 
 func (s *Server) timelineURL(u *User) string {

@@ -1,4 +1,4 @@
-package amagg
+package island
 
 import (
 	"errors"
@@ -17,50 +17,48 @@ import (
 	"atomicmicro.blog/internal/websub"
 )
 
-// The aggregator subscribes via WebSub to every polled feed that names a hub
+// The island subscribes via WebSub to every polled feed that names a hub
 // (see the spec, "WebSub" and "Polling"). Pushes are ingested like a poll;
-// polling continues at max_interval as a fallback.
+// polling continues at the maximum interval as a fallback. The application
+// routes GET and POST /websub/{feed} to HandleWebSubVerify and
+// HandleWebSubPush.
 
 const (
 	renewBefore    = 24 * time.Hour   // renew a subscription this long before it expires
 	pendingTimeout = 10 * time.Minute // re-request if the hub hasn't verified by then
 )
 
-func (s *Server) callbackURL(feedID int64) string {
-	return s.cfg.Aggregator.BaseURL + "/websub/" + strconv.FormatInt(feedID, 10)
-}
-
 // ensureSubscription keeps the feed's subscription current: subscribe when
 // the feed names a hub, renew before expiry, drop it when the hub is gone.
 // Called after a successful poll, with feedMu held.
-func (s *Server) ensureSubscription(f *Feed, doc *atom.Feed) error {
-	sub, err := s.store.GetSubscription(f.ID)
+func (is *Island) ensureSubscription(f *Feed, doc *atom.Feed) error {
+	sub, err := is.Store.GetSubscription(f.ID)
 	if errors.Is(err, ErrNotFound) {
 		sub, err = nil, nil
 	}
 	if err != nil {
 		return err
 	}
-	hub := linkHref(doc.Links, "hub")
+	hub := LinkHref(doc.Links, "hub")
 	if hub == "" {
 		if sub != nil {
-			return s.store.DeleteSubscription(f.ID)
+			return is.Store.DeleteSubscription(f.ID)
 		}
 		return nil
 	}
 	if hub, err = resolve(f.URL, hub); err != nil {
 		return err
 	}
-	if _, err := checkFetchURL(hub); err != nil {
+	if _, err := CheckFetchURL(hub); err != nil {
 		return err
 	}
 	topic := f.URL
-	if self := linkHref(doc.Links, "self"); self != "" {
+	if self := LinkHref(doc.Links, "self"); self != "" {
 		if topic, err = resolve(f.URL, self); err != nil {
 			return err
 		}
 	}
-	now := s.now()
+	now := is.Now()
 	if sub != nil && sub.Hub == hub && sub.Topic == topic {
 		switch sub.State {
 		case "active":
@@ -80,13 +78,13 @@ func (s *Server) ensureSubscription(f *Feed, doc *atom.Feed) error {
 	if sub != nil && sub.Hub == hub && sub.Topic == topic && sub.State == "active" {
 		next.Secret, next.State, next.Expires = sub.Secret, sub.State, sub.Expires
 	}
-	if err := s.store.PutSubscription(next); err != nil {
+	if err := is.Store.PutSubscription(next); err != nil {
 		return err
 	}
-	resp, err := s.client.PostForm(hub, url.Values{
+	resp, err := is.Client.PostForm(hub, url.Values{
 		"hub.mode":          {"subscribe"},
 		"hub.topic":         {topic},
-		"hub.callback":      {s.callbackURL(f.ID)},
+		"hub.callback":      {is.callbackURL(f.ID)},
 		"hub.secret":        {next.Secret},
 		"hub.lease_seconds": {strconv.Itoa(int(websub.DefaultLease / time.Second))},
 	})
@@ -100,14 +98,14 @@ func (s *Server) ensureSubscription(f *Feed, doc *atom.Feed) error {
 	return nil
 }
 
-// pushing reports whether the feed has an active subscription.
-func (s *Server) pushing(feedID int64) bool {
-	sub, err := s.store.GetSubscription(feedID)
+// Pushing reports whether the feed has an active subscription.
+func (is *Island) Pushing(feedID int64) bool {
+	sub, err := is.Store.GetSubscription(feedID)
 	if err != nil || sub.State != "active" {
 		return false
 	}
 	exp, err := time.Parse(time.RFC3339, sub.Expires)
-	return err == nil && s.now().Before(exp)
+	return err == nil && is.Now().Before(exp)
 }
 
 func feedIDParam(r *http.Request) (int64, bool) {
@@ -115,16 +113,16 @@ func feedIDParam(r *http.Request) (int64, bool) {
 	return id, err == nil
 }
 
-// handleWebSubVerify answers the hub's verification of intent: confirm
+// HandleWebSubVerify answers the hub's verification of intent: confirm
 // subscriptions we asked for, and unsubscriptions of feeds we no longer have.
-func (s *Server) handleWebSubVerify(w http.ResponseWriter, r *http.Request) {
+func (is *Island) HandleWebSubVerify(w http.ResponseWriter, r *http.Request) {
 	id, ok := feedIDParam(r)
 	if !ok {
 		http.NotFound(w, r)
 		return
 	}
 	q := r.URL.Query()
-	sub, err := s.store.GetSubscription(id)
+	sub, err := is.Store.GetSubscription(id)
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		web.ServerError(w, err)
 		return
@@ -139,8 +137,8 @@ func (s *Server) handleWebSubVerify(w http.ResponseWriter, r *http.Request) {
 		if secs, err := strconv.Atoi(q.Get("hub.lease_seconds")); err == nil && secs > 0 {
 			lease = time.Duration(secs) * time.Second
 		}
-		sub.State, sub.Expires = "active", paging.FormatTime(s.now().Add(lease))
-		if err := s.store.PutSubscription(sub); err != nil {
+		sub.State, sub.Expires = "active", paging.FormatTime(is.Now().Add(lease))
+		if err := is.Store.PutSubscription(sub); err != nil {
 			web.ServerError(w, err)
 			return
 		}
@@ -152,7 +150,7 @@ func (s *Server) handleWebSubVerify(w http.ResponseWriter, r *http.Request) {
 	case "denied":
 		if sub != nil {
 			log.Printf("websub: hub %s denied feed %d: %s", sub.Hub, id, q.Get("hub.reason"))
-			if err := s.store.DeleteSubscription(id); err != nil {
+			if err := is.Store.DeleteSubscription(id); err != nil {
 				web.ServerError(w, err)
 				return
 			}
@@ -167,21 +165,21 @@ func (s *Server) handleWebSubVerify(w http.ResponseWriter, r *http.Request) {
 	io.WriteString(w, q.Get("hub.challenge"))
 }
 
-// handleWebSubPush ingests content the hub pushed, after checking its
+// HandleWebSubPush ingests content the hub pushed, after checking its
 // signature. Feeds nobody wants any more answer 410 Gone, which ends the
 // subscription at the hub.
-func (s *Server) handleWebSubPush(w http.ResponseWriter, r *http.Request) {
+func (is *Island) HandleWebSubPush(w http.ResponseWriter, r *http.Request) {
 	id, ok := feedIDParam(r)
 	if !ok {
 		http.NotFound(w, r)
 		return
 	}
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxFetchSize))
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, MaxFetchSize))
 	if err != nil {
 		web.WriteError(w, http.StatusRequestEntityTooLarge, err.Error())
 		return
 	}
-	sub, err := s.store.GetSubscription(id)
+	sub, err := is.Store.GetSubscription(id)
 	if errors.Is(err, ErrNotFound) {
 		w.WriteHeader(http.StatusGone)
 		return
@@ -190,13 +188,13 @@ func (s *Server) handleWebSubPush(w http.ResponseWriter, r *http.Request) {
 		web.ServerError(w, err)
 		return
 	}
-	wanted, err := s.store.FeedWanted(id)
+	wanted, err := is.Store.FeedWanted(id)
 	if err != nil {
 		web.ServerError(w, err)
 		return
 	}
 	if !wanted {
-		if err := s.store.DeleteSubscription(id); err != nil {
+		if err := is.Store.DeleteSubscription(id); err != nil {
 			web.ServerError(w, err)
 			return
 		}
@@ -214,25 +212,25 @@ func (s *Server) handleWebSubPush(w http.ResponseWriter, r *http.Request) {
 		web.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := s.ingestPush(id, doc); err != nil {
+	if err := is.ingestPush(id, doc); err != nil {
 		web.ServerError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) ingestPush(feedID int64, doc *atom.Feed) error {
-	s.feedMu.Lock()
-	defer s.feedMu.Unlock()
-	f, err := s.store.GetFeed(feedID)
+func (is *Island) ingestPush(feedID int64, doc *atom.Feed) error {
+	is.feedMu.Lock()
+	defer is.feedMu.Unlock()
+	f, err := is.Store.GetFeed(feedID)
 	if err != nil {
 		return err
 	}
-	if _, err := s.ingestPages(f, doc); err != nil {
+	if _, err := is.ingestPages(f, doc); err != nil {
 		return err
 	}
 	if t := strings.TrimSpace(doc.Title); t != "" {
 		f.Title = t
 	}
-	return s.store.SaveFeed(f)
+	return is.Store.SaveFeed(f)
 }

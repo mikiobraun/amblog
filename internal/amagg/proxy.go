@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"atomicmicro.blog/internal/atom"
+	"atomicmicro.blog/internal/island"
 	"atomicmicro.blog/internal/web"
 )
 
@@ -50,13 +51,13 @@ func (c *proxyCache) put(url string, body []byte, now time.Time) {
 // as Atom are passed on, so this is no open proxy.
 func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request, u *User) {
 	target := r.URL.Query().Get("url")
-	if _, err := checkFetchURL(target); err != nil {
+	if _, err := island.CheckFetchURL(target); err != nil {
 		web.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	body, ok := s.proxy.get(target, s.now())
 	if !ok {
-		resp, err := fetch(s.client, target, http.Header{"Accept": {atom.MediaType}})
+		resp, err := island.Fetch(s.client, target, http.Header{"Accept": {atom.MediaType}})
 		if err != nil {
 			web.WriteError(w, http.StatusBadGateway, err.Error())
 			return

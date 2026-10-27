@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
 	"atomicmicro.blog/internal/atom"
+	"atomicmicro.blog/internal/island"
 	"atomicmicro.blog/internal/paging"
 	"atomicmicro.blog/internal/sign"
 	"atomicmicro.blog/internal/web"
@@ -153,7 +155,7 @@ func (s *Server) checkChallenge(authorURI, token string) error {
 		return err
 	}
 	want := token + "." + s.origin
-	resp, err := fetch(noRedirects(s.client), u, nil)
+	resp, err := island.Fetch(noRedirects(s.client), u, nil)
 	if err != nil {
 		return fmt.Errorf("%w: %v", errChallengeMismatch, err)
 	}
@@ -171,14 +173,14 @@ type registrationError struct{ error }
 // register creates a member: it discovers the feed from the profile page at
 // the author URI, checks that the feed speaks for that author, and polls it.
 func (s *Server) register(p pendingLogin) (*User, error) {
-	feedURL, doc, err := discoverFeed(s.client, p.authorURI)
+	feedURL, doc, err := island.DiscoverFeed(s.client, p.authorURI)
 	if err != nil {
 		return nil, registrationError{err}
 	}
 	if author := feedAuthorURI(doc); author != "" && normalizeURI(author) != p.authorURI {
 		return nil, registrationError{fmt.Errorf("feed %s belongs to %s, not %s", feedURL, author, p.authorURI)}
 	}
-	f, err := s.store.AddFeed(feedURL, s.cfg.Polling.DefaultInterval.Duration, paging.FormatTime(s.now()))
+	f, err := s.island.AddFeed(feedURL)
 	if err != nil {
 		return nil, err
 	}
@@ -186,7 +188,7 @@ func (s *Server) register(p pendingLogin) (*User, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := s.pollFeed(f); err != nil {
+	if err := s.island.PollFeed(f); err != nil {
 		log.Printf("register %s: first poll of %s: %v", p.authorURI, feedURL, err)
 	}
 	return user, nil
@@ -214,6 +216,40 @@ func normalizeURI(s string) string {
 	}
 	return s
 }
+
+// checkIdentityURI validates and normalizes an author URI used as identity:
+// absolute, no query or fragment, HTTPS unless on a loopback host (for
+// development). An empty path becomes "/", so "https://miki.one" and
+// "https://miki.one/" are the same identity.
+func checkIdentityURI(s string) (string, error) {
+	u, err := url.Parse(s)
+	if err != nil {
+		return "", fmt.Errorf("author uri %q: %w", s, err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" || u.Host == "" {
+		return "", fmt.Errorf("author uri %q is not an absolute http(s) URL", s)
+	}
+	if u.RawQuery != "" || u.Fragment != "" {
+		return "", fmt.Errorf("author uri %q must not have a query or fragment", s)
+	}
+	if u.Scheme != "https" && !island.IsLoopback(u.Hostname()) {
+		return "", fmt.Errorf("author uri %q must use https", s)
+	}
+	if u.Path == "" {
+		u.Path = "/"
+	}
+	return u.String(), nil
+}
+
+// noRedirects makes a client return redirect responses instead of following
+// them, so a login challenge must be served under the identity URL itself.
+func noRedirects(c *http.Client) *http.Client {
+	nc := *c
+	nc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return &nc
+}
+
+var errChallengeMismatch = errors.New("challenge not found under the identity URL")
 
 func truncate(s string, n int) string {
 	if len(s) > n {

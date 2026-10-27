@@ -6,7 +6,7 @@ import (
 	"log"
 	"net/http"
 
-	"atomicmicro.blog/internal/paging"
+	"atomicmicro.blog/internal/island"
 	"atomicmicro.blog/internal/web"
 )
 
@@ -25,12 +25,12 @@ func (s *Server) handleFollow(w http.ResponseWriter, r *http.Request, u *User) {
 	if !web.DecodeJSON(w, r, &req) {
 		return
 	}
-	feedURL, _, err := discoverFeed(s.client, req.FeedURL)
+	feedURL, _, err := island.DiscoverFeed(s.client, req.FeedURL)
 	if err != nil {
 		web.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	f, err := s.store.AddFeed(feedURL, s.cfg.Polling.DefaultInterval.Duration, paging.FormatTime(s.now()))
+	f, err := s.island.AddFeed(feedURL)
 	if err != nil {
 		web.ServerError(w, err)
 		return
@@ -40,7 +40,7 @@ func (s *Server) handleFollow(w http.ResponseWriter, r *http.Request, u *User) {
 		return
 	}
 	if f.LastSeen == "" {
-		if err := s.pollFeed(f); err != nil {
+		if err := s.island.PollFeed(f); err != nil {
 			log.Printf("follow %s: first poll: %v", f.URL, err)
 		}
 	}

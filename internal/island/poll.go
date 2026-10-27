@@ -1,11 +1,10 @@
-package amagg
+package island
 
 import (
 	"context"
 	"fmt"
 	"log"
 	"net/http"
-	"net/url"
 	"time"
 
 	"atomicmicro.blog/internal/atom"
@@ -20,11 +19,11 @@ const (
 )
 
 // RunPoller polls due feeds until ctx is cancelled.
-func (s *Server) RunPoller(ctx context.Context) {
+func (is *Island) RunPoller(ctx context.Context) {
 	t := time.NewTicker(pollTick)
 	defer t.Stop()
 	for {
-		s.PollDue()
+		is.PollDue()
 		select {
 		case <-ctx.Done():
 			return
@@ -34,27 +33,33 @@ func (s *Server) RunPoller(ctx context.Context) {
 }
 
 // PollDue polls the feeds whose next poll is due.
-func (s *Server) PollDue() {
-	feeds, err := s.store.DueFeeds(paging.FormatTime(s.now()), pollBatch)
+func (is *Island) PollDue() {
+	feeds, err := is.Store.DueFeeds(paging.FormatTime(is.Now()), pollBatch)
 	if err != nil {
 		log.Printf("poll: %v", err)
 		return
 	}
 	for _, f := range feeds {
-		if err := s.pollFeed(f); err != nil {
+		if err := is.PollFeed(f); err != nil {
 			log.Printf("poll %s: %v", f.URL, err)
 		}
 	}
 }
 
-// pollFeed fetches a feed (conditionally), ingests new and changed entries,
+// AddFeed returns the feed with the given URL, creating it with the default
+// interval, due right away.
+func (is *Island) AddFeed(url string) (*Feed, error) {
+	return is.Store.AddFeed(url, is.opts.DefaultInterval, paging.FormatTime(is.Now()))
+}
+
+// PollFeed fetches a feed (conditionally), ingests new and changed entries,
 // following RFC 5005 next links until it reaches entries it has seen, keeps
 // its WebSub subscription current, and schedules the next poll.
-func (s *Server) pollFeed(f *Feed) error {
-	s.feedMu.Lock()
-	defer s.feedMu.Unlock()
+func (is *Island) PollFeed(f *Feed) error {
+	is.feedMu.Lock()
+	defer is.feedMu.Unlock()
 	// A push may have moved the feed on since f was read.
-	f, err := s.store.GetFeed(f.ID)
+	f, err := is.Store.GetFeed(f.ID)
 	if err != nil {
 		return err
 	}
@@ -66,7 +71,7 @@ func (s *Server) pollFeed(f *Feed) error {
 		header.Set("If-Modified-Since", f.LastModified)
 	}
 	changed := false
-	resp, err := fetch(s.client, f.URL, header)
+	resp, err := Fetch(is.Client, f.URL, header)
 	switch {
 	case err != nil:
 	case resp.Status == http.StatusNotModified:
@@ -76,21 +81,21 @@ func (s *Server) pollFeed(f *Feed) error {
 		var doc *atom.Feed
 		if doc, err = atom.Parse(resp.Body); err == nil {
 			f.ETag, f.LastModified = resp.ETag, resp.LastModified
-			f.AtomID, f.Title, f.HTMLURL = doc.ID, doc.Title, linkHref(doc.Links, "alternate")
-			changed, err = s.ingestPages(f, doc)
-			if serr := s.ensureSubscription(f, doc); serr != nil {
+			f.AtomID, f.Title, f.HTMLURL = doc.ID, doc.Title, LinkHref(doc.Links, "alternate")
+			changed, err = is.ingestPages(f, doc)
+			if serr := is.ensureSubscription(f, doc); serr != nil {
 				log.Printf("websub %s: %v", f.URL, serr)
 			}
 		}
 	}
-	s.schedule(f, changed, err)
-	if serr := s.store.SaveFeed(f); serr != nil {
+	is.schedule(f, changed, err)
+	if serr := is.Store.SaveFeed(f); serr != nil {
 		return serr
 	}
 	return err
 }
 
-func (s *Server) ingestPages(f *Feed, doc *atom.Feed) (changed bool, err error) {
+func (is *Island) ingestPages(f *Feed, doc *atom.Feed) (changed bool, err error) {
 	lastSeen := f.LastSeen
 	maxPages := maxPollPages
 	if lastSeen == "" {
@@ -98,9 +103,9 @@ func (s *Server) ingestPages(f *Feed, doc *atom.Feed) (changed bool, err error) 
 	}
 	// An entry dated in the future must not push last_seen past now, or real
 	// updates would be skipped until then.
-	nowStr := paging.FormatTime(s.now())
+	nowStr := paging.FormatTime(is.Now())
 	// Members' replies are forwarded to their sources.
-	member, err := s.store.IsMemberFeed(f.ID)
+	member, err := is.Store.IsMemberFeed(f.ID)
 	if err != nil {
 		return false, err
 	}
@@ -114,21 +119,21 @@ func (s *Server) ingestPages(f *Feed, doc *atom.Feed) (changed bool, err error) 
 				reachedSeen = true
 				continue
 			}
-			c, err := s.ingest(e, origin{fetchedFrom: f.URL, feed: f, feedDoc: doc, forward: member})
+			c, err := is.ingest(e, origin{fetchedFrom: f.URL, feed: f, feedDoc: doc, forward: member})
 			if err != nil {
 				return changed, err
 			}
 			changed = changed || c
 			f.LastSeen = max(f.LastSeen, min(updated, nowStr))
 		}
-		next := linkHref(doc.Links, "next")
+		next := LinkHref(doc.Links, "next")
 		if reachedSeen || next == "" || page >= maxPages {
 			return changed, nil
 		}
 		if pageURL, err = resolve(pageURL, next); err != nil {
 			return changed, err
 		}
-		resp, err := fetch(s.client, pageURL, acceptFeed)
+		resp, err := Fetch(is.Client, pageURL, acceptFeed)
 		if err != nil {
 			return changed, err
 		}
@@ -143,12 +148,11 @@ func (s *Server) ingestPages(f *Feed, doc *atom.Feed) (changed bool, err error) 
 
 // schedule adapts the feed's polling interval: shorter when it changed,
 // longer when it didn't, backing off further on errors. A feed that pushes
-// via WebSub is polled at max_interval only, as a fallback.
-func (s *Server) schedule(f *Feed, changed bool, err error) {
-	p := s.cfg.Polling
+// via WebSub is polled at the maximum interval only, as a fallback.
+func (is *Island) schedule(f *Feed, changed bool, err error) {
 	switch {
-	case s.pushing(f.ID):
-		f.Interval = p.MaxInterval.Duration
+	case is.Pushing(f.ID):
+		f.Interval = is.opts.MaxInterval
 		if err != nil {
 			f.Failures++
 			f.LastError = err.Error()
@@ -166,27 +170,6 @@ func (s *Server) schedule(f *Feed, changed bool, err error) {
 		f.Failures, f.LastError = 0, ""
 		f.Interval = f.Interval * 3 / 2
 	}
-	f.Interval = min(max(f.Interval, p.MinInterval.Duration), p.MaxInterval.Duration)
-	f.NextPoll = paging.FormatTime(s.now().Add(f.Interval))
-}
-
-func linkHref(links []atom.Link, rel string) string {
-	for _, l := range links {
-		if l.Rel == rel || (l.Rel == "" && rel == "alternate") {
-			return l.Href
-		}
-	}
-	return ""
-}
-
-func resolve(base, ref string) (string, error) {
-	b, err := url.Parse(base)
-	if err != nil {
-		return "", err
-	}
-	r, err := url.Parse(ref)
-	if err != nil {
-		return "", err
-	}
-	return b.ResolveReference(r).String(), nil
+	f.Interval = min(max(f.Interval, is.opts.MinInterval), is.opts.MaxInterval)
+	f.NextPoll = paging.FormatTime(is.Now().Add(f.Interval))
 }
