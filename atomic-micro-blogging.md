@@ -26,6 +26,8 @@ Each layer is independently swappable:
 - **amagg** — Someone runs the room. An aggregator that holds follow graphs, merges subscribed feeds into timelines, handles interactions via WebMention, and serves the merged result as Atom.
 - **amfront** — Anyone can build a face. A pure client that reads from aggregators and posts to feed servers. Zero server state.
 
+**ampress** combines aggregation and presentation for a single feed: a blog. It is an island with one feed in it, rendered as web pages.
+
 ### Design Principles
 
 The rest of this document follows from these.
@@ -916,7 +918,45 @@ Because amfront is just an Atom consumer + API client, anyone can build a replac
 
 ---
 
-## 7. Entry Types
+## 7. ampress — Blog
+
+ampress turns one feed into a blog. It follows the feed like an aggregator with one member and serves its posts as web pages, with the replies they receive.
+
+### Responsibilities
+
+1. Follow one feed: WebSub subscription, polling as fallback, ingest with verification (the same rules as amagg, see [Ingest and Verification](#ingest-and-verification))
+2. Serve an index of the feed's posts, a page per post, and an about page
+3. Re-serve the posts as its own Atom feed
+4. Receive WebMentions for its post pages, show the replies under the post, and forward them to the source (see [Forwarding to the Source](#forwarding-to-the-source))
+
+### What's a Post
+
+The index, the post pages and the Atom feed contain the feed's **top-level posts**: entries without `thr:in-reply-to` and without a verb (no likes or reposts). The owner's replies to other people's posts stay out. A tombstone removes the post from the index and the feed; its page answers `410 Gone`.
+
+### Post URLs
+
+A post is served at `/posts/{slug}`. The slug is the last segment of its entry ID: everything after the last `:` or `/`. So `tag:miki.one,2026-10:content/2026-10-27` → `/posts/2026-10-27` and `tag:miki.one,2024-12:post-42` → `/posts/post-42`. A feed controls its slugs through its IDs, e.g. the frontmatter `id` of a content-folder post. Slugs must be unique within the blog: an entry whose slug belongs to another entry is logged and not shown.
+
+### Pages
+
+| Route | Description |
+|-------|-------------|
+| `/` | Index, newest first, paged with `?before=` |
+| `/posts/{slug}` | Post with its replies |
+| `/about` | About page |
+| `/feed.atom` | Top-level posts, re-served (`alternate` → the post page, plus `rel="via"` and `atom:source`) |
+| `/webmention` | WebMention endpoint, advertised on every post page |
+| `/static/{file}` | Static files of the theme (CSS, images) |
+
+Feed HTML is rendered under the same sandboxing CSP as amagg's post pages.
+
+### Themes
+
+Pages are Go `html/template` files. ampress has a default theme built in. A configured `theme` folder overrides it file by file: a file in the folder replaces the built-in one with the same name, and everything else stays default. Templates are replaced whole, never merged.
+
+---
+
+## 8. Entry Types
 
 Atom's `<content>` element with `type` attribute handles basic post types. We use Atom extension elements for richer types:
 
@@ -982,7 +1022,7 @@ Expressed as Atom entries with extension elements:
 
 ---
 
-## 8. Service Configuration
+## 9. Service Configuration
 
 Config files are TOML. Relative paths are resolved against the config file's directory; unknown keys are an error.
 
@@ -1045,6 +1085,28 @@ block_hosts = []          # sending hosts whose mentions are rejected
 path = "amagg.db"
 ```
 
+### ampress
+
+```toml
+# ampress.toml
+[server]
+listen = ":8400"
+
+[blog]
+title = "Daily Briefs"
+base_url = "https://briefs.example"
+feed = "https://miki.one/feed.atom"   # the one feed this blog shows
+about = "about.md"                    # Markdown, rendered as /about
+theme = "theme"                       # optional: overrides the built-in theme
+
+[webmention]
+per_host_per_hour = 30
+block_hosts = []
+
+[storage]
+path = "ampress.db"
+```
+
 ### amfront
 
 ```toml
@@ -1055,7 +1117,7 @@ listen = ":8300"
 
 ---
 
-## 9. Deployment Topology
+## 10. Deployment Topology
 
 ### Self-Hosted (all three)
 
@@ -1091,7 +1153,7 @@ Others:     bring their own feeds and frontends
 
 ---
 
-## 10. Comparison with Existing Protocols
+## 11. Comparison with Existing Protocols
 
 | Feature | ActivityPub | AT Protocol | Nostr | OStatus | **Atomic Micro Blogging** |
 |---------|-------------|-------------|-------|---------|--------------------------|
@@ -1105,16 +1167,19 @@ Others:     bring their own feeds and frontends
 
 ---
 
-## 11. Open Questions
+## 12. Open Questions
 
 1. **Follow graph protection** — Signatures keep an aggregator from forging posts, and your content lives on your feed server, but the aggregator sees your follow graph and reading patterns, and shared following lists publish the graph. How much protection does the follow graph need, e.g. lists readable only by aggregators you name?
+2. **Replies that miss the blog** — A reply to a post's amfeed URL reaches the feed server's `replies.atom`, not ampress. Should ampress read `replies.atom` too, so every reply shows under the post?
 
 ### Deferred
 
 - **Rich media** — Media hosting is the feed server's problem. Should amfeed include media upload, or delegate to external hosts?
 - **Entry size limits** — Should feeds enforce a max entry size? Micro-blogging suggests yes (keep it short), but the protocol shouldn't prevent long-form.
 - **Likes in feed readers** — Likes and reposts are entries, so they show up as near-empty items in plain feed readers. Should they live in a separate feed?
-- **Hosting for people without servers** — amfeed is single-author. A separate multi-tenant host (working name *amhost*) would serve identities like `https://amhost.example/mikio/` (the protocol supports identities with a path). Open: account management (possibly a `forward_auth` proxy passing trusted user headers to a localhost-bound backend), and whether the host holds signing keys (custodial) or users bring their own.
+- **Hosting for people without servers** — amfeed is single-author. An optional multi-user mode (off by default) would serve identities like `https://amhost.example/mikio/` (the protocol supports identities with a path), with keys, tokens, IDs and a feed per user, and registration by email link. ampress comments use it: a commenter without a feed gets an identity on the blog's amfeed. Open: whether the host holds signing keys (custodial) or users bring their own.
+- **Private comments** — Comments visible only to the commenter and the blog owner until both make them public. Needs entries that aren't in the public feed (readable only by named subscribers), and touches moderation.
+- **Blogs from several feeds** — ampress shows one feed. Combining several (a planet) raises its own questions, e.g. ordering; a separate project.
 
 - **Posting from other sites** — A site that isn't your client (e.g. a blog's comment box) can't post to your feed today: you reply from your own client, or the site links to it with the reply prefilled. Two ways to reply without leaving the site; your entries stay on your feed server and are signed there in both:
   - **Embedded compose box:** you enter your identity URL on the site; the site discovers your compose page from your profile (a rel link) and embeds it in an iframe, passing only `in-reply-to`. You log in and post inside the iframe, which belongs to your feed server; it reports its height and the posted URL to the site via `postMessage`. The site never holds a token. Open: browsers partition iframe storage per embedding site, so you log in once per site (passkeys work in cross-origin iframes); clickjacking, since the compose page must be embeddable everywhere (text typed only inside the iframe, the reply target shown, a real click to post).
@@ -1128,7 +1193,7 @@ Others:     bring their own feeds and frontends
 
 ---
 
-## 12. Implementation Roadmap
+## 13. Implementation Roadmap
 
 ### Phase 1: Foundation
 
@@ -1180,3 +1245,10 @@ Others:     bring their own feeds and frontends
 - [x] `amfeed`: Content folder (Markdown files with frontmatter as posts)
 - [x] Landing page at atomicmicro.blog, with go-import tag for the module path
 - [ ] Documentation site at atomicmicro.blog
+
+### Phase 6: ampress
+
+- [ ] v1: index, post pages, about page, Atom feed, WebMention replies, themes
+- [ ] v1.5: readers count, emoji reactions
+- [ ] v2: public comments; commenters without a feed get an identity on a multi-user amfeed (email registration)
+- [ ] Move the parts of amagg that ampress uses out of `internal/` into a public package
