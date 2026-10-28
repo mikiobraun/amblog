@@ -6,6 +6,7 @@ import (
 	"html"
 	"html/template"
 	"io/fs"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -181,13 +182,41 @@ func parseBefore(w http.ResponseWriter, r *http.Request) (*paging.Cursor, bool) 
 	return &c, true
 }
 
+// posts returns a page of posts and the cursor of the next one. Where the
+// stored posts run out but the feed has history left, it reads one more page
+// of it first, and there is a next page as long as history remains.
+func (s *Server) posts(before *paging.Cursor) ([]*Post, *paging.Cursor, error) {
+	posts, next, err := s.store.Posts(before, pageSize)
+	if err != nil || next != nil {
+		return posts, next, err
+	}
+	f, err := s.store.GetFeed(s.feedID)
+	if err != nil || f.BackfillNext == "" {
+		return posts, nil, err
+	}
+	more := true
+	if len(posts) < pageSize {
+		if more, err = s.island.Backfill(s.feedID); err != nil {
+			log.Printf("ampress: backfill %s: %v", f.URL, err) // the next request tries again
+		}
+		if posts, next, err = s.store.Posts(before, pageSize); err != nil || next != nil {
+			return posts, next, err
+		}
+	}
+	if !more || len(posts) == 0 {
+		return posts, nil, nil
+	}
+	last := posts[len(posts)-1]
+	return posts, &paging.Cursor{Time: last.SortTime, Seq: last.N}, nil
+}
+
 // handleIndex serves the newest posts, paged with ?before=.
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	before, ok := parseBefore(w, r)
 	if !ok {
 		return
 	}
-	posts, next, err := s.store.Posts(before, pageSize)
+	posts, next, err := s.posts(before)
 	if err != nil {
 		web.ServerError(w, err)
 		return
@@ -296,7 +325,7 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	posts, next, err := s.store.Posts(before, pageSize)
+	posts, next, err := s.posts(before)
 	if err != nil {
 		web.ServerError(w, err)
 		return

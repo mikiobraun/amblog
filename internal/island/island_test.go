@@ -1,6 +1,43 @@
 package island
 
-import "testing"
+import (
+	"database/sql"
+	"path/filepath"
+	"testing"
+)
+
+// Databases from before backfill get the new column; their feeds have no
+// history to read.
+func TestStoreMigration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`CREATE TABLE feeds (
+		id INTEGER PRIMARY KEY, url TEXT NOT NULL UNIQUE, atom_id TEXT NOT NULL DEFAULT '', title TEXT NOT NULL DEFAULT '',
+		html_url TEXT NOT NULL DEFAULT '', etag TEXT NOT NULL DEFAULT '', last_modified TEXT NOT NULL DEFAULT '',
+		last_seen TEXT NOT NULL DEFAULT '', interval_s INTEGER NOT NULL, next_poll TEXT NOT NULL,
+		last_error TEXT NOT NULL DEFAULT '', failures INTEGER NOT NULL DEFAULT 0);
+		INSERT INTO feeds (id, url, interval_s, next_poll) VALUES (1, 'https://example.com/feed.atom', 60, '')`)
+	db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := OpenStore(path, Schema{WantedFeeds: `SELECT id FROM feeds`, MemberFeeds: `SELECT id FROM feeds`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	f, err := store.GetFeed(1)
+	if err != nil || f.URL != "https://example.com/feed.atom" || f.BackfillNext != "" {
+		t.Fatalf("old feed: %+v, %v", f, err)
+	}
+	f.BackfillNext = "https://example.com/feed.atom?page=2"
+	if err := store.SaveFeed(f); err != nil {
+		t.Fatal(err)
+	}
+}
 
 // The island is tested end to end through amagg (internal/amagg) and ampress
 // (internal/ampress); these are its pure functions.

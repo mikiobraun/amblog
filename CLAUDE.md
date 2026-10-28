@@ -116,6 +116,7 @@ The `Makefile` wraps the common ones: `make build`, `make test`, `make check` (g
 - Stored times (`sort_time`, `updated`, `last_seen`) are normalized to RFC 3339 UTC seconds so they compare as strings; `last_seen` never passes "now".
 - Login fetches the challenge **without redirects**; identity URIs must be HTTPS except on loopback hosts.
 - Post pages render untrusted feed HTML under a sandboxing CSP (`island.PageCSP`; ampress's `pageCSP` also allows its own styles and fonts); keep that header on every HTML response.
+- History beyond a feed's first pages is read on demand only (`Island.Backfill`, one page per call, cursor in `feeds.backfill_next`); polls never read it. ampress backfills when paging runs past its stored posts.
 - ampress: posts are top-level entries of the blog's feed, kept in `posts` by the island's `Ingested` hook; the slug is the last segment of the entry ID, and the first entry to claim a slug keeps it.
 - Several paths can ingest the same entry at once (WebSub push, WebMention, poll). `InsertEntry` is insert-or-nothing; on a lost race `ingest` falls through to the replacement rule. Don't reintroduce check-then-insert.
 - Feed polling state is updated under `feedMu` (polls and pushes both write it); `PollFeed` re-reads the feed inside the lock.

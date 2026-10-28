@@ -27,7 +27,8 @@ var schema = []string{
 		interval_s    INTEGER NOT NULL,
 		next_poll     TEXT NOT NULL,
 		last_error    TEXT NOT NULL DEFAULT '',
-		failures      INTEGER NOT NULL DEFAULT 0
+		failures      INTEGER NOT NULL DEFAULT 0,
+		backfill_next TEXT NOT NULL DEFAULT '' -- next older page not read yet, see Island.Backfill
 	)`,
 	// Ingested entries. n is the local post number; id the Atom entry id.
 	// feed_id is the feed the entry arrived through, NULL for entries that
@@ -91,13 +92,34 @@ func OpenStore(path string, sch Schema) (*Store, error) {
 	// One connection: SQLite has a single writer anyway, and this avoids
 	// SQLITE_BUSY between our own connections.
 	db.SetMaxOpenConns(1)
-	for _, stmt := range append(schema, sch.Tables...) {
+	for _, stmt := range schema {
+		if _, err := db.Exec(stmt); err != nil {
+			db.Close()
+			return nil, err
+		}
+	}
+	if err := migrate(db); err != nil {
+		db.Close()
+		return nil, err
+	}
+	for _, stmt := range sch.Tables {
 		if _, err := db.Exec(stmt); err != nil {
 			db.Close()
 			return nil, err
 		}
 	}
 	return &Store{db: db, schema: sch}, nil
+}
+
+// migrate brings databases from before a schema change up to date.
+func migrate(db *sql.DB) error {
+	var n int
+	err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('feeds') WHERE name = 'backfill_next'`).Scan(&n)
+	if err != nil || n > 0 {
+		return err
+	}
+	_, err = db.Exec(`ALTER TABLE feeds ADD COLUMN backfill_next TEXT NOT NULL DEFAULT ''`)
+	return err
 }
 
 func (s *Store) Close() error { return s.db.Close() }
@@ -120,15 +142,16 @@ type Feed struct {
 	NextPoll     string
 	LastError    string
 	Failures     int
+	BackfillNext string // the next older page not read yet; empty when the history is complete
 }
 
-const FeedColumns = `id, url, atom_id, title, html_url, etag, last_modified, last_seen, interval_s, next_poll, last_error, failures`
+const FeedColumns = `id, url, atom_id, title, html_url, etag, last_modified, last_seen, interval_s, next_poll, last_error, failures, backfill_next`
 
 func ScanFeed(row interface{ Scan(...any) error }) (*Feed, error) {
 	var f Feed
 	var interval int64
 	err := row.Scan(&f.ID, &f.URL, &f.AtomID, &f.Title, &f.HTMLURL, &f.ETag, &f.LastModified, &f.LastSeen,
-		&interval, &f.NextPoll, &f.LastError, &f.Failures)
+		&interval, &f.NextPoll, &f.LastError, &f.Failures, &f.BackfillNext)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -153,9 +176,9 @@ func (s *Store) GetFeed(id int64) (*Feed, error) {
 // SaveFeed stores the feed's metadata and polling state.
 func (s *Store) SaveFeed(f *Feed) error {
 	_, err := s.db.Exec(`UPDATE feeds SET atom_id = ?, title = ?, html_url = ?, etag = ?, last_modified = ?,
-		last_seen = ?, interval_s = ?, next_poll = ?, last_error = ?, failures = ? WHERE id = ?`,
+		last_seen = ?, interval_s = ?, next_poll = ?, last_error = ?, failures = ?, backfill_next = ? WHERE id = ?`,
 		f.AtomID, f.Title, f.HTMLURL, f.ETag, f.LastModified, f.LastSeen,
-		int64(f.Interval/time.Second), f.NextPoll, f.LastError, f.Failures, f.ID)
+		int64(f.Interval/time.Second), f.NextPoll, f.LastError, f.Failures, f.BackfillNext, f.ID)
 	return err
 }
 

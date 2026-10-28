@@ -596,7 +596,7 @@ This also settles which entry a reply's `thr:in-reply-to ref` points to: once an
 - Conditional requests (`ETag`, `Last-Modified`), so unchanged feeds cost a `304`.
 - Paged feeds (RFC 5005) are followed via `rel="next"` until an entry with an `updated` older than the last one seen. Entries with `updated` equal to the last seen value are re-checked, since timestamps have second precision.
 - The last seen `updated` never advances past the aggregator's current time, so an entry dated in the future can't hide later updates.
-- The first fetch of a feed reads at most a few pages; history beyond that is not backfilled.
+- The first fetch of a feed reads at most a few pages and keeps the `next` link of the last one. History beyond that is read on demand, one page at a time, when someone asks for entries older than those stored (e.g. paging back through a blog); polls never read it.
 - The interval adapts per feed between `min_interval` and `max_interval`: shorter for feeds that change often, backing off for quiet or failing ones.
 - Feeds with a WebSub subscription are still polled, at `max_interval`, so a lost push delays an entry but doesn't lose it.
 
@@ -943,7 +943,7 @@ A post is served at `/posts/{slug}`. The slug is the last segment of its entry I
 
 | Route | Description |
 |-------|-------------|
-| `/` | Index, newest first, paged with `?before=` |
+| `/` | Index, newest first, paged with `?before=`. Paging past the stored posts reads the feed's history (see [Polling](#polling)) |
 | `/posts/{slug}` | Post with its replies |
 | `/about` | About page |
 | `/feed.atom` | Top-level posts, re-served (`alternate` → the post page, plus `rel="via"` and `atom:source`) |

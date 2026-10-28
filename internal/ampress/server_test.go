@@ -2,12 +2,16 @@ package ampress
 
 import (
 	"encoding/json"
+	"html"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -271,6 +275,86 @@ func TestAboutAndTheme(t *testing.T) {
 	}
 	blog.get("/static/nope.css", 404)
 	blog.get("/static/", 404)
+}
+
+// pagedFeed serves a plain Atom feed of n entries, newest first, perPage per
+// page, linked with rel="next", and counts the requests per page.
+func pagedFeed(t *testing.T, n, perPage int) (url string, fetched map[int]int) {
+	t.Helper()
+	fetched = map[int]int{}
+	var mu sync.Mutex
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+		page = max(page, 1)
+		mu.Lock()
+		fetched[page]++
+		mu.Unlock()
+		self := "http://" + r.Host + "/feed.atom"
+		f := &atom.Feed{ID: self, Title: "Paged", Updated: base.Format(time.RFC3339),
+			Author: &atom.Person{Name: "Pager", URI: "http://" + r.Host + "/"}}
+		if page*perPage < n {
+			f.Links = append(f.Links, atom.Link{Rel: "next", Href: self + "?page=" + strconv.Itoa(page+1)})
+		}
+		for i := n - (page-1)*perPage; i > max(n-page*perPage, 0); i-- {
+			ts := base.Add(time.Duration(i) * time.Hour).Format(time.RFC3339)
+			f.Entries = append(f.Entries, &atom.Entry{ID: "tag:example.com,2026:entry-" + strconv.Itoa(i),
+				Title: "Entry " + strconv.Itoa(i), Published: ts, Updated: ts, Content: &atom.Content{Body: "Text"}})
+		}
+		body, _ := atom.MarshalFeed(f)
+		w.Header().Set("Content-Type", atom.MediaType)
+		w.Write(body)
+	}))
+	t.Cleanup(ts.Close)
+	return ts.URL + "/feed.atom", fetched
+}
+
+var olderRe = regexp.MustCompile(`<a href="([^"]*before=[^"]*)">Older posts`)
+
+// History beyond the first pages is read one page at a time, when someone
+// pages that far back.
+func TestBackfill(t *testing.T) {
+	feedURL, fetched := pagedFeed(t, 50, 10)
+	blog := startBlog(t, feedURL, nil)
+	blog.poll()
+	if fetched[3] != 1 || fetched[4] != 0 {
+		t.Fatalf("first poll fetched pages %v, want 1-3", fetched)
+	}
+
+	// Each index page: its posts, and the link to the next one.
+	page := func(path string) (titles []string, next string) {
+		_, body := blog.get(path, 200)
+		for _, m := range regexp.MustCompile(`>Entry (\d+)</a>`).FindAllStringSubmatch(body, -1) {
+			titles = append(titles, m[1])
+		}
+		if m := olderRe.FindStringSubmatch(body); m != nil {
+			next = strings.TrimPrefix(html.UnescapeString(m[1]), blog.url)
+		}
+		return titles, next
+	}
+	titles, next := page("/")
+	if len(titles) != 20 || titles[0] != "50" || next == "" || fetched[4] != 0 {
+		t.Fatalf("page 1: %v, next %q, fetched %v", titles, next, fetched)
+	}
+	// 10 posts left in store: page 4 of the feed is read to fill the page.
+	titles, next = page(next)
+	if len(titles) != 20 || titles[0] != "30" || titles[19] != "11" || next == "" || fetched[4] != 1 || fetched[5] != 0 {
+		t.Fatalf("page 2: %v, next %q, fetched %v", titles, next, fetched)
+	}
+	// The last page reads the rest; the history is complete.
+	titles, next = page(next)
+	if len(titles) != 10 || titles[9] != "1" || next != "" || fetched[5] != 1 {
+		t.Fatalf("page 3: %v, next %q, fetched %v", titles, next, fetched)
+	}
+	if f, err := blog.srv.store.GetFeed(blog.srv.feedID); err != nil || f.BackfillNext != "" {
+		t.Errorf("backfill_next after the last page: %+v, %v", f, err)
+	}
+	// Paging again reads nothing more.
+	page("/")
+	page(regexp.MustCompile(`\?before=.*`).FindString(next))
+	if fetched[4] != 1 || fetched[5] != 1 {
+		t.Errorf("history read twice: %v", fetched)
+	}
 }
 
 // Switching the blog to another feed and back shows the first feed's posts

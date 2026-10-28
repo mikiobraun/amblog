@@ -97,8 +97,9 @@ func (is *Island) PollFeed(f *Feed) error {
 
 func (is *Island) ingestPages(f *Feed, doc *atom.Feed) (changed bool, err error) {
 	lastSeen := f.LastSeen
+	first := lastSeen == ""
 	maxPages := maxPollPages
-	if lastSeen == "" {
+	if first {
 		maxPages = firstFetchPages
 	}
 	// An entry dated in the future must not push last_seen past now, or real
@@ -127,12 +128,18 @@ func (is *Island) ingestPages(f *Feed, doc *atom.Feed) (changed bool, err error)
 			f.LastSeen = max(f.LastSeen, min(updated, nowStr))
 		}
 		next := LinkHref(doc.Links, "next")
+		if next != "" {
+			if next, err = resolve(pageURL, next); err != nil {
+				return changed, err
+			}
+		}
 		if reachedSeen || next == "" || page >= maxPages {
+			if first && !reachedSeen {
+				f.BackfillNext = next // the history beyond the first pages, read on demand
+			}
 			return changed, nil
 		}
-		if pageURL, err = resolve(pageURL, next); err != nil {
-			return changed, err
-		}
+		pageURL = next
 		resp, err := Fetch(is.Client, pageURL, acceptFeed)
 		if err != nil {
 			return changed, err
@@ -144,6 +151,52 @@ func (is *Island) ingestPages(f *Feed, doc *atom.Feed) (changed bool, err error)
 			return changed, fmt.Errorf("%s: %w", pageURL, err)
 		}
 	}
+}
+
+// Backfill reads the next older page of a feed's history, if there is one
+// (see Feed.BackfillNext), and reports whether more remain. Applications call
+// it when someone asks for posts older than those stored, so history is read
+// one page per request and only as far as anyone looks. Entries go through
+// ingest like any other: an older copy never replaces a newer version.
+func (is *Island) Backfill(feedID int64) (more bool, err error) {
+	is.feedMu.Lock()
+	defer is.feedMu.Unlock()
+	f, err := is.Store.GetFeed(feedID)
+	if err != nil || f.BackfillNext == "" {
+		return false, err
+	}
+	pageURL := f.BackfillNext
+	resp, err := Fetch(is.Client, pageURL, acceptFeed)
+	if err != nil {
+		return true, err
+	}
+	if resp.Status != http.StatusOK {
+		return true, fmt.Errorf("GET %s: status %d", pageURL, resp.Status)
+	}
+	doc, err := atom.Parse(resp.Body)
+	if err != nil {
+		return true, fmt.Errorf("%s: %w", pageURL, err)
+	}
+	member, err := is.Store.IsMemberFeed(f.ID)
+	if err != nil {
+		return true, err
+	}
+	for _, e := range doc.Entries {
+		if _, err := is.ingest(e, origin{fetchedFrom: f.URL, feed: f, feedDoc: doc, forward: member}); err != nil {
+			return true, err
+		}
+	}
+	next := LinkHref(doc.Links, "next")
+	if next != "" {
+		if next, err = resolve(pageURL, next); err != nil {
+			return true, err
+		}
+	}
+	if next == pageURL {
+		next = "" // a page linking itself would never end
+	}
+	f.BackfillNext = next
+	return next != "", is.Store.SaveFeed(f)
 }
 
 // schedule adapts the feed's polling interval: shorter when it changed,
