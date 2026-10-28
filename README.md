@@ -64,6 +64,10 @@ For the web frontend: `cd amfront && npm install && npm run dev`, then open http
 
 From a checkout, `make dev` sets up a whole local network instead: three feeds (alice, bob, carol) and an island, with posts, logins and follows.
 
+## License
+
+BSD 3-Clause, see [LICENSE](LICENSE).
+
 ---
 
 *atomicmicro.blog — the dream of a better web, retro-futurism included.*
