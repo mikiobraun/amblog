@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Atomic Micro Blogging: a decentralized social network built from existing web standards (Atom, RFC 4685 threading, WebSub, WebMention). Social networking is split into three independently swappable parts: **amfeed** (publishing), **amagg** (aggregation), **amfront** (presentation).
+Atomic Micro Blogging: a decentralized social network built from existing web standards (Atom, RFC 4685 threading, WebSub, WebMention). Social networking is split into three independently swappable parts: **amfeed** (publishing), **amagg** (aggregation), **amfront** (presentation). **ampress** combines aggregation and presentation for a single feed: a blog.
 
 **The spec is the source of truth: [atomic-micro-blogging.md](atomic-micro-blogging.md).** Read the relevant section before changing behavior. When a design decision changes, update the spec in the same change, and keep its Open Questions section current. The spec describes the current design only: no history ("was", "added back", "resolved"), no per-decision rationale. Reasons belong in the Design Principles (§1); add or sharpen a principle instead of explaining a single decision.
 
