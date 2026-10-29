@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -279,6 +280,101 @@ func TestAboutAndTheme(t *testing.T) {
 	}
 	blog.get("/static/nope.css", 404)
 	blog.get("/static/", 404)
+}
+
+func (b *blogEnv) api(method, path, contentType, body string, wantStatus int) postState {
+	b.t.Helper()
+	req, _ := http.NewRequest(method, b.url+path, strings.NewReader(body))
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		b.t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != wantStatus {
+		b.t.Fatalf("%s %s: %d, want %d: %s", method, path, resp.StatusCode, wantStatus, data)
+	}
+	var st postState
+	if wantStatus == 200 {
+		if err := json.Unmarshal(data, &st); err != nil {
+			b.t.Fatal(err)
+		}
+	}
+	return st
+}
+
+func counts(st postState) map[string]int {
+	m := map[string]int{}
+	for _, r := range st.Reactions {
+		m[r.Emoji] = r.Count
+	}
+	return m
+}
+
+func TestReactions(t *testing.T) {
+	alice := startFeed(t, "Alice")
+	alice.post(t, `{"content":"React to me"}`)
+	blog := startBlog(t, alice.url+"/feed.atom", nil)
+	blog.poll()
+	const a, b = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	const js = "application/json"
+	react := func(reader, emoji string) postState {
+		return blog.api("POST", "/api/posts/post-1/reactions", js, `{"reader":"`+reader+`","emoji":"`+emoji+`"}`, 200)
+	}
+
+	st := blog.api("GET", "/api/posts/post-1", "", "", 200)
+	if len(st.Reactions) != 4 || st.Reactions[0].Emoji != "👍" || st.Reads != 0 || len(st.Mine) != 0 {
+		t.Fatalf("initial state: %+v", st)
+	}
+	// A reaction toggles; each reader counts once per emoji.
+	if st = react(a, "👍"); counts(st)["👍"] != 1 || !slices.Equal(st.Mine, []string{"👍"}) {
+		t.Errorf("after a 👍: %+v", st)
+	}
+	if st = react(a, "👍"); counts(st)["👍"] != 0 || len(st.Mine) != 0 {
+		t.Errorf("after a 👍 again: %+v", st)
+	}
+	react(a, "❤️")
+	if st = react(b, "❤️"); counts(st)["❤️"] != 2 || !slices.Equal(st.Mine, []string{"❤️"}) {
+		t.Errorf("after two ❤️: %+v", st)
+	}
+	if st = blog.api("GET", "/api/posts/post-1?reader="+a, "", "", 200); !slices.Equal(st.Mine, []string{"❤️"}) {
+		t.Errorf("a's own reactions: %+v", st)
+	}
+
+	// Reads: once per reader.
+	blog.api("POST", "/api/posts/post-1/reads", js, `{"reader":"`+a+`"}`, 200)
+	blog.api("POST", "/api/posts/post-1/reads", js, `{"reader":"`+a+`"}`, 200)
+	if st = blog.api("POST", "/api/posts/post-1/reads", js, `{"reader":"`+b+`"}`, 200); st.Reads != 2 {
+		t.Errorf("reads: %d, want 2", st.Reads)
+	}
+
+	// The page shows the counts without JavaScript.
+	_, page := blog.get("/posts/post-1", 200)
+	if !strings.Contains(page, `❤️ <span class="count">2</span>`) || !strings.Contains(page, "2 readers") ||
+		!strings.Contains(page, `data-api="`+blog.url+`/api/posts/post-1"`) {
+		t.Errorf("post page: %s", page)
+	}
+
+	// Refused: other emojis, bad tokens, non-JSON bodies (cross-site forms), unknown posts.
+	blog.api("POST", "/api/posts/post-1/reactions", js, `{"reader":"`+a+`","emoji":"💩"}`, 400)
+	blog.api("POST", "/api/posts/post-1/reactions", js, `{"reader":"short","emoji":"👍"}`, 400)
+	blog.api("POST", "/api/posts/post-1/reactions", "text/plain", `{"reader":"`+a+`","emoji":"👍"}`, 415)
+	blog.api("POST", "/api/posts/nope/reactions", js, `{"reader":"`+a+`","emoji":"👍"}`, 404)
+	blog.api("GET", "/api/posts/post-1?reader=x", "", "", 400)
+}
+
+func TestReactionsOff(t *testing.T) {
+	alice := startFeed(t, "Alice")
+	alice.post(t, `{"content":"No reactions"}`)
+	blog := startBlog(t, alice.url+"/feed.atom", func(c *Config) { c.Blog.Reactions = nil })
+	blog.poll()
+	blog.api("POST", "/api/posts/post-1/reactions", "application/json", `{"reader":"aaaaaaaaaaaaaaaa","emoji":"👍"}`, 400)
+	if _, page := blog.get("/posts/post-1", 200); strings.Contains(page, `class="reaction"`) || !strings.Contains(page, "0 readers") {
+		t.Errorf("post page without reactions: %s", page)
+	}
 }
 
 // pagedFeed serves a plain Atom feed of n entries, newest first, perPage per

@@ -948,9 +948,16 @@ A post is served at `/posts/{slug}`. The slug is the last segment of its entry I
 | `/about` | About page |
 | `/feed.atom` | Top-level posts, re-served (`alternate` → the post page, plus `rel="via"` and `atom:source`) |
 | `/webmention` | WebMention endpoint, advertised on every post page |
-| `/static/{file}` | Static files of the theme (CSS, images) |
+| `/static/{file}` | Static files of the theme (CSS, images, scripts) |
+| `GET /api/posts/{slug}?reader=` | Reactions, the reader's own, and the readers count of a post (JSON) |
+| `POST /api/posts/{slug}/reactions` | `{"reader", "emoji"}`: toggles the reader's reaction |
+| `POST /api/posts/{slug}/reads` | `{"reader"}`: counts the reader once |
 
 HTML from feeds is data, not a page. Before display it is reduced to an allowlist of structure: text, lists, tables, figures, links, images (http(s) only), microformats2 classes; scripts, styles, embeds and forms go. HTML that Markdown produces stays intact. This applies to the blog's own posts as much as to replies, since the feed could be anyone's; the stored entries keep their HTML as signed. As a second layer, the page's CSP lets only the blog's own scripts, styles and fonts load.
+
+### Reactions and Readers
+
+Readers can react to a post with one of the blog's emojis (configurable, default 👍 ❤️ 🤔 🎉), and each post shows how many people read it. Both are local to the blog: they're not entries, not in the Atom feed, and not federated. Readers are anonymous: the browser keeps a random token, the blog stores only its hash. A reaction toggles; a read counts once per token, when half the post has been seen for 15 seconds. The page renders the counts; the theme's script makes them interactive. The API accepts only JSON bodies, which other sites' pages can't send to the blog without CORS, which it doesn't grant.
 
 ### Themes
 
@@ -1100,6 +1107,7 @@ base_url = "https://briefs.example"
 feed = "https://miki.one/feed.atom"   # the one feed this blog shows
 about = "about.md"                    # Markdown, rendered as /about
 theme = "theme"                       # optional: overrides the built-in theme
+reactions = ["👍", "❤️", "🤔", "🎉"]   # the default; [] turns reactions off
 
 [webmention]
 per_host_per_hour = 30
@@ -1249,6 +1257,6 @@ Others:     bring their own feeds and frontends
 ### Phase 6: ampress
 
 - [x] v1: index, post pages, about page, Atom feed, WebMention replies, themes
-- [ ] v1.5: readers count, emoji reactions
+- [x] v1.5: readers count, emoji reactions
 - [ ] v2: public comments; commenters without a feed get an identity on a multi-user amfeed (email registration)
 - [ ] Make the island core (following feeds, ingest, WebSub, WebMentions; `internal/island`) a public package

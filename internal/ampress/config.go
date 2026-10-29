@@ -32,7 +32,11 @@ type BlogConfig struct {
 	Feed    string `toml:"feed"`            // the one feed this blog shows
 	About   string `toml:"about,omitempty"` // optional: Markdown file, rendered as /about
 	Theme   string `toml:"theme,omitempty"` // optional: folder overriding the built-in theme
+	// Reactions readers can give a post. Missing: defaultReactions; empty: none.
+	Reactions []string `toml:"reactions"`
 }
+
+var defaultReactions = []string{"👍", "❤️", "🤔", "🎉"}
 
 // WebMentionConfig is spam control for incoming WebMentions. The section is
 // optional; without it, the defaults apply.
@@ -58,6 +62,9 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if !md.IsDefined("webmention", "per_host_per_hour") {
 		c.WebMention.PerHostPerHour = webmention.DefaultPerHostPerHour
+	}
+	if !md.IsDefined("blog", "reactions") {
+		c.Blog.Reactions = defaultReactions
 	}
 	if err := c.validate(); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
@@ -93,7 +100,7 @@ type InitOptions struct {
 func Init(dir string, opts InitOptions) (string, error) {
 	c := &Config{
 		Server:     ServerConfig{Listen: opts.Listen},
-		Blog:       BlogConfig{Title: opts.Title, BaseURL: strings.TrimSuffix(opts.BaseURL, "/"), Feed: opts.Feed},
+		Blog:       BlogConfig{Title: opts.Title, BaseURL: strings.TrimSuffix(opts.BaseURL, "/"), Feed: opts.Feed, Reactions: defaultReactions},
 		WebMention: WebMentionConfig{PerHostPerHour: webmention.DefaultPerHostPerHour, BlockHosts: []string{}},
 		Storage:    StorageConfig{Path: "ampress.db"},
 	}
@@ -136,6 +143,13 @@ func (c *Config) validate() error {
 	}
 	if c.WebMention.PerHostPerHour < 1 {
 		errs = append(errs, errors.New("webmention.per_host_per_hour must be at least 1"))
+	}
+	seen := map[string]bool{}
+	for _, r := range c.Blog.Reactions {
+		if r == "" || len(r) > 32 || seen[r] {
+			errs = append(errs, fmt.Errorf("blog.reactions: %q is empty, too long or listed twice", r))
+		}
+		seen[r] = true
 	}
 	return errors.Join(errs...)
 }

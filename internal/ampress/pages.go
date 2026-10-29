@@ -45,6 +45,8 @@ type page struct {
 	Post       *postView  // post page
 	Replies    []postView // post page, in conversation order
 	WebMention string     // post page: the endpoint, for <link rel="webmention">
+	State      *postState // post page: reactions and readers
+	API        string     // post page: the post's API URL, for the script
 
 	HTML template.HTML // about page
 }
@@ -297,6 +299,12 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 		data.Replies = append(data.Replies, v)
 	}
 	post.Replies = len(data.Replies)
+	st, err := s.postState(p.N, "")
+	if err != nil {
+		web.ServerError(w, err)
+		return
+	}
+	data.State, data.API = &st, s.cfg.Blog.BaseURL+"/api/posts/"+url.PathEscape(p.Slug)
 	s.render(w, "post", http.StatusOK, data)
 }
 

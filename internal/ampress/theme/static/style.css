@@ -74,6 +74,29 @@ h1 { font-size: 2rem; margin: 0 0 0.25rem; }
 .content th, .content td { border: 1px solid var(--rule); padding: 0.25rem 0.5rem; }
 .text { white-space: pre-wrap; }
 
+.reactions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: -1rem 0 2rem;
+}
+.reaction {
+  font: inherit;
+  font-size: 0.9375rem;
+  padding: 0.25rem 0.7rem;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+}
+.reaction:hover:not(:disabled) { border-color: var(--accent); }
+.reaction:disabled { cursor: default; }
+.reaction.mine { border-color: var(--accent); background: var(--reply-bg); }
+.reaction .count { color: var(--muted); font-size: 0.875rem; }
+.reads { margin-left: auto; color: var(--muted); font-size: 0.875rem; }
+
 .replies { border-top: 1px solid var(--rule); padding-top: 1rem; }
 .replies > h2 { font-size: 1.125rem; }
 .reply {

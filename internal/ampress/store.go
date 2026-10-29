@@ -24,6 +24,21 @@ var schema = island.Schema{
 			slug    TEXT NOT NULL UNIQUE,
 			deleted INTEGER NOT NULL
 		)`,
+		// Reactions and reads of posts, by anonymous reader: reader is the
+		// SHA-256 of the token a reader's browser keeps.
+		`CREATE TABLE IF NOT EXISTS reactions (
+			n       INTEGER NOT NULL REFERENCES entries (n),
+			reader  TEXT NOT NULL,
+			emoji   TEXT NOT NULL,
+			created TEXT NOT NULL,
+			PRIMARY KEY (n, reader, emoji)
+		)`,
+		`CREATE TABLE IF NOT EXISTS reads (
+			n       INTEGER NOT NULL REFERENCES entries (n),
+			reader  TEXT NOT NULL,
+			created TEXT NOT NULL,
+			PRIMARY KEY (n, reader)
+		)`,
 	},
 	WantedFeeds: `SELECT feed_id FROM blog`,
 	MemberFeeds: `SELECT feed_id FROM blog`,
@@ -161,6 +176,57 @@ func (s *Store) Posts(before *paging.Cursor, limit int) (posts []*Post, next *pa
 		next = &paging.Cursor{Time: last.SortTime, Seq: last.N}
 	}
 	return posts, next, nil
+}
+
+// ToggleReaction adds the reader's reaction to post n, or removes it if it is
+// there, and reports whether it is there now.
+func (s *Store) ToggleReaction(n int64, reader, emoji, now string) (on bool, err error) {
+	res, err := s.db.Exec(`DELETE FROM reactions WHERE n = ? AND reader = ? AND emoji = ?`, n, reader, emoji)
+	if err != nil {
+		return false, err
+	}
+	if removed, _ := res.RowsAffected(); removed > 0 {
+		return false, nil
+	}
+	_, err = s.db.Exec(`INSERT INTO reactions (n, reader, emoji, created) VALUES (?, ?, ?, ?)`, n, reader, emoji, now)
+	return err == nil, err
+}
+
+// Reactions returns the number of reactions per emoji on post n, and the
+// emojis the reader (if not empty) reacted with.
+func (s *Store) Reactions(n int64, reader string) (counts map[string]int, mine []string, err error) {
+	rows, err := s.db.Query(`SELECT emoji, COUNT(*), SUM(reader = ?) FROM reactions WHERE n = ? GROUP BY emoji`, reader, n)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	counts = map[string]int{}
+	mine = []string{}
+	for rows.Next() {
+		var emoji string
+		var count, own int
+		if err := rows.Scan(&emoji, &count, &own); err != nil {
+			return nil, nil, err
+		}
+		counts[emoji] = count
+		if own > 0 {
+			mine = append(mine, emoji)
+		}
+	}
+	return counts, mine, rows.Err()
+}
+
+// AddRead records that the reader read post n; a reader counts once.
+func (s *Store) AddRead(n int64, reader, now string) error {
+	_, err := s.db.Exec(`INSERT INTO reads (n, reader, created) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`, n, reader, now)
+	return err
+}
+
+// Reads returns the number of readers of post n.
+func (s *Store) Reads(n int64) (int, error) {
+	var count int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM reads WHERE n = ?`, n).Scan(&count)
+	return count, err
 }
 
 // prefixed qualifies a comma-separated column list with a table alias.

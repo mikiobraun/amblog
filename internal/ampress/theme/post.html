@@ -8,6 +8,15 @@
   <div class="content">{{if .HTML}}{{.HTML}}{{else}}<p class="text">{{.Text}}</p>{{end}}</div>
 </article>
 {{end}}
+{{- with .State}}
+<div class="reactions" data-api="{{$.API}}">
+  {{- range .Reactions}}
+  <button type="button" class="reaction" data-emoji="{{.Emoji}}" disabled>{{.Emoji}} <span class="count">{{.Count}}</span></button>
+  {{- end}}
+  <span class="reads">{{.Reads}} {{if eq .Reads 1}}reader{{else}}readers{{end}}</span>
+</div>
+<script src="{{$.Blog.URL}}/static/ampress.js" defer></script>
+{{- end}}
 <section class="replies" id="replies">
   {{- if .Replies}}
   <h2>{{len .Replies}} {{if eq (len .Replies) 1}}reply{{else}}replies{{end}}</h2>
