@@ -79,7 +79,8 @@ The `Makefile` wraps the common ones: `make build`, `make test`, `make check` (g
 - **Simple and explicit over clever.** Fail loudly with a clear message instead of guessing. Examples in the code: unknown TOML keys are errors, JSON request bodies reject unknown fields, malformed page cursors return 400, signed content types are restricted to `text`/`html`.
 - **Reuse existing standards** (RFC 4287/4685/5005, WebSub, WebMention). Our own extensions live in the `atomic:` namespace (`https://atomicmicro.blog/ns/1.0`) and should stay few.
 - **Interop that matters:** plain feed readers and WebMention-enabled blogs. Interop with ActivityPub/AT Protocol is a non-goal.
-- **Small dependency footprint.** Go: stdlib + `modernc.org/sqlite` (pure Go, no cgo) + `BurntSushi/toml` + `yuin/goldmark` (Markdown for the content folder). amfront: Vue + DOMPurify. Frontmatter is read by a few lines of our own, not a YAML library.
+- **Single static binary.** Go dependencies must be pure Go (no cgo), so every component stays one binary (e.g. `modernc.org/sqlite`, not the cgo driver).
+- **Dependencies by role.** Infrastructure and reusable code stay lean: amfeed (which everyone runs) and the shared packages (`atom`, `sign`, `paging`, `web`, `webmention`, `websub`, `island`) use only what they must — today `modernc.org/sqlite`, `BurntSushi/toml`, `yuin/goldmark`; frontmatter is read by a few lines of our own. Applications (amagg, ampress, amfront) are free to use established libraries where they earn their keep, and should prefer them over hand-rolled versions of security-relevant code (e.g. HTML sanitizing).
 
 ## Key invariants — don't break these
 
