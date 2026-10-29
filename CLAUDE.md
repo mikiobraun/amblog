@@ -116,7 +116,7 @@ The `Makefile` wraps the common ones: `make build`, `make test`, `make check` (g
 - Entries are keyed by Atom `id`; `feed_id` NULL means "not from a polled feed" (e.g. a fetched parent) and keeps the entry out of timelines.
 - Stored times (`sort_time`, `updated`, `last_seen`) are normalized to RFC 3339 UTC seconds so they compare as strings; `last_seen` never passes "now".
 - Login fetches the challenge **without redirects**; identity URIs must be HTTPS except on loopback hosts.
-- Post pages render untrusted feed HTML under a sandboxing CSP (`island.PageCSP`; ampress's `pageCSP` also allows its own styles and fonts); keep that header on every HTML response.
+- Feed HTML is untrusted. amagg's post pages render it under a sandboxing CSP (`island.PageCSP`). ampress sanitizes it at display time (bluemonday allowlist, `ampress/sanitize.go`: Markdown output must survive unchanged, `TestSanitizeKeepsMarkdown`) and serves pages with a strict CSP (`script-src 'self'`, no sandbox) so themes can use their own JS. Keep the CSP header on every HTML response.
 - History beyond a feed's first pages is read on demand only (`Island.Backfill`, one page per call, cursor in `feeds.backfill_next`); polls never read it. ampress backfills when paging runs past its stored posts.
 - ampress: posts are top-level entries of the blog's feed, kept in `posts` by the island's `Ingested` hook; the slug is the last segment of the entry ID, and the first entry to claim a slug keeps it.
 - Several paths can ingest the same entry at once (WebSub push, WebMention, poll). `InsertEntry` is insert-or-nothing; on a lost race `ingest` falls through to the replacement rule. Don't reintroduce check-then-insert.

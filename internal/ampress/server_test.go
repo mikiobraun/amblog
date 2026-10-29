@@ -217,12 +217,16 @@ func TestBlog(t *testing.T) {
 
 	// A reply to the post page arrives via WebMention, shows under the post
 	// and is forwarded to the post's source.
-	reply := bob.post(t, `{"content":"Nice brief!","in_reply_to":{"ref":"`+first.ID+`","href":"`+blog.url+`/posts/post-1"}}`)
+	reply := bob.post(t, `{"content":"<p onclick=\"steal()\">Nice brief!<script>alert(1)</script></p>","content_type":"html",`+
+		`"in_reply_to":{"ref":"`+first.ID+`","href":"`+blog.url+`/posts/post-1"}}`)
 	bob.srv.Wait()
 	blog.srv.Wait()
 	_, page = blog.get("/posts/post-1", 200)
-	if !strings.Contains(page, "Nice brief!") || !strings.Contains(page, `href="`+bob.url+`/"`) || strings.Contains(page, "unverified") {
+	if !strings.Contains(page, "<p>Nice brief!</p>") || !strings.Contains(page, `href="`+bob.url+`/"`) || strings.Contains(page, "unverified") {
 		t.Errorf("reply on the post page: %s", page)
+	}
+	if strings.Contains(page, "alert(1)") || strings.Contains(page, "steal()") {
+		t.Errorf("reply not sanitized: %s", page)
 	}
 	_, index = blog.get("/", 200)
 	if !strings.Contains(index, "1 reply") {

@@ -950,7 +950,7 @@ A post is served at `/posts/{slug}`. The slug is the last segment of its entry I
 | `/webmention` | WebMention endpoint, advertised on every post page |
 | `/static/{file}` | Static files of the theme (CSS, images) |
 
-Pages are served under a sandboxing CSP like amagg's post pages (no scripts, forms or plugins), which also lets the theme's own stylesheets and fonts load.
+HTML from feeds is data, not a page. Before display it is reduced to an allowlist of structure: text, lists, tables, figures, links, images (http(s) only), microformats2 classes; scripts, styles, embeds and forms go. HTML that Markdown produces stays intact. This applies to the blog's own posts as much as to replies, since the feed could be anyone's; the stored entries keep their HTML as signed. As a second layer, the page's CSP lets only the blog's own scripts, styles and fonts load.
 
 ### Themes
 

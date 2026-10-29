@@ -25,10 +25,12 @@ import (
 
 const pageSize = 20
 
-// Post pages render feed HTML, and replies come from anywhere: pages are
-// served with a CSP that forbids scripts, forms and plugins (sandbox), like
-// island.PageCSP, but lets the theme's own styles and fonts load.
-const pageCSP = "default-src 'none'; img-src * data:; style-src 'self' 'unsafe-inline'; font-src 'self'; sandbox"
+// Feed HTML is sanitized before display (sanitize.go). As a second layer, the
+// page policy lets only the blog's own scripts, styles and fonts load, so
+// anything the sanitizer missed can't run. Inline styles stay allowed for the
+// table alignment the sanitizer keeps.
+const pageCSP = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; " +
+	"img-src * data:; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
 
 var markdown = goldmark.New(goldmark.WithExtensions(extension.GFM))
 
@@ -57,7 +59,7 @@ type blogView struct {
 type postView struct {
 	URL        string // the post page; empty for replies
 	Title      string
-	HTML       template.HTML // untrusted for replies, see pageCSP
+	HTML       template.HTML // sanitized, see sanitize.go
 	Text       string        // content of type text
 	Excerpt    string        // plain text: the summary, or else the content's first paragraph, shortened
 	Published  string        // RFC 3339
@@ -101,7 +103,7 @@ func (s *Server) postView(e *island.Entry, reply bool) (postView, error) {
 	}
 	if ae.Content != nil {
 		if ae.Content.Type == "html" {
-			body := ae.Content.Body
+			body := sanitize(ae.Content.Body)
 			if reply {
 				body = island.Nofollow(body)
 			}
@@ -362,8 +364,7 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 	island.WriteAtom(w, r, f)
 }
 
-// handleStatic serves the theme's static files. Fonts are fetched with CORS
-// from the sandboxed pages, hence Access-Control-Allow-Origin.
+// handleStatic serves the theme's static files.
 func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("file")
 	fsys := s.theme.static(name)
@@ -371,6 +372,5 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	w.Header().Set("Access-Control-Allow-Origin", "*")
 	http.ServeFileFS(w, r, fsys, name)
 }
