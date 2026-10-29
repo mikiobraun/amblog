@@ -15,8 +15,11 @@
 {{else}}
 <p class="empty">No posts yet.</p>
 {{end}}
-{{- if .NextURL}}
-<nav class="pager"><a href="{{.NextURL}}">Older posts →</a></nav>
+{{- if or .PrevURL .NextURL}}
+<nav class="pager">
+  {{- if .PrevURL}}<a class="newer" href="{{.PrevURL}}">← Newer posts</a>{{end}}
+  {{- if .NextURL}}<a class="older" href="{{.NextURL}}">Older posts →</a>{{end}}
+</nav>
 {{- end}}
 {{end}}
 

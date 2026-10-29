@@ -178,6 +178,34 @@ func (s *Store) Posts(before *paging.Cursor, limit int) (posts []*Post, next *pa
 	return posts, next, nil
 }
 
+// NewerPage returns the cursor of the page before the one starting with
+// first: the limit posts that are newer. front is true when that is the
+// first page, which has no cursor.
+func (s *Store) NewerPage(first *Post, limit int) (cursor *paging.Cursor, front bool, err error) {
+	rows, err := s.db.Query(postSelect+` WHERE NOT p.deleted AND (e.sort_time, e.n) > (?, ?)
+		ORDER BY e.sort_time, e.n LIMIT ?`, first.SortTime, first.N, limit+1)
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+	var newer []*Post
+	for rows.Next() {
+		p, err := scanPost(rows)
+		if err != nil {
+			return nil, false, err
+		}
+		newer = append(newer, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	if len(newer) <= limit {
+		return nil, true, nil
+	}
+	// The newer page starts just below newer[limit].
+	return &paging.Cursor{Time: newer[limit].SortTime, Seq: newer[limit].N}, false, nil
+}
+
 // ToggleReaction adds the reader's reaction to post n, or removes it if it is
 // there, and reports whether it is there now.
 func (s *Store) ToggleReaction(n int64, reader, emoji, now string) (on bool, err error) {

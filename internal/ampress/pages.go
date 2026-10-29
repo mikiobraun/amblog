@@ -41,6 +41,7 @@ type page struct {
 
 	Posts   []postView // index
 	NextURL string     // index: the next (older) page, if any
+	PrevURL string     // index: the previous (newer) page, if this isn't the first
 
 	Post       *postView  // post page
 	Replies    []postView // post page, in conversation order
@@ -241,6 +242,17 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	if next != nil {
 		data.NextURL = s.cfg.Blog.BaseURL + "/?before=" + url.QueryEscape(next.String())
+	}
+	if before != nil && len(posts) > 0 {
+		prev, front, err := s.store.NewerPage(posts[0], pageSize)
+		if err != nil {
+			web.ServerError(w, err)
+			return
+		}
+		data.PrevURL = s.cfg.Blog.BaseURL + "/"
+		if !front {
+			data.PrevURL += "?before=" + url.QueryEscape(prev.String())
+		}
 	}
 	s.render(w, "index", http.StatusOK, data)
 }

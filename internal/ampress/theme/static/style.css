@@ -115,7 +115,8 @@ h1 { font-size: 2rem; margin: 0 0 0.25rem; }
 .unverified { font-style: italic; }
 .hint { color: var(--muted); font-size: 0.875rem; }
 
-.pager { margin: 2rem 0; }
+.pager { display: flex; margin: 2rem 0; }
+.pager .older { margin-left: auto; }
 .empty { color: var(--muted); }
 
 footer.site {

@@ -207,7 +207,8 @@ func TestBlog(t *testing.T) {
 
 	// Post page: content, WebMention endpoint.
 	resp, page := blog.get("/posts/post-1", 200)
-	if !strings.Contains(page, "<h1>First Brief</h1>") || !strings.Contains(page, "Hello <em>world</em>") {
+	if !strings.Contains(page, "<h1>First Brief</h1>") || !strings.Contains(page, "Hello <em>world</em>") ||
+		!strings.Contains(page, `<a class="newer" href="`+blog.url+`/">← All posts</a>`) {
 		t.Errorf("post page: %s", page)
 	}
 	if resp.Header.Get("Link") != "<"+blog.url+`/webmention>; rel="webmention"` || resp.Header.Get("Content-Security-Policy") != pageCSP {
@@ -409,7 +410,10 @@ func pagedFeed(t *testing.T, n, perPage int) (url string, fetched map[int]int) {
 	return ts.URL + "/feed.atom", fetched
 }
 
-var olderRe = regexp.MustCompile(`<a href="([^"]*before=[^"]*)">Older posts`)
+var (
+	olderRe = regexp.MustCompile(`<a class="older" href="([^"]*before=[^"]*)">Older posts`)
+	newerRe = regexp.MustCompile(`<a class="newer" href="([^"]*)">← Newer posts`)
+)
 
 // History beyond the first pages is read one page at a time, when someone
 // pages that far back.
@@ -421,7 +425,8 @@ func TestBackfill(t *testing.T) {
 		t.Fatalf("first poll fetched pages %v, want 1-3", fetched)
 	}
 
-	// Each index page: its posts, and the link to the next one.
+	// Each index page: its posts, and the links to the older and newer pages.
+	var prev string
 	page := func(path string) (titles []string, next string) {
 		_, body := blog.get(path, 200)
 		for _, m := range regexp.MustCompile(`>Entry (\d+)</a>`).FindAllStringSubmatch(body, -1) {
@@ -430,21 +435,30 @@ func TestBackfill(t *testing.T) {
 		if m := olderRe.FindStringSubmatch(body); m != nil {
 			next = strings.TrimPrefix(html.UnescapeString(m[1]), blog.url)
 		}
+		prev = ""
+		if m := newerRe.FindStringSubmatch(body); m != nil {
+			prev = strings.TrimPrefix(html.UnescapeString(m[1]), blog.url)
+		}
 		return titles, next
 	}
 	titles, next := page("/")
-	if len(titles) != 20 || titles[0] != "50" || next == "" || fetched[4] != 0 {
-		t.Fatalf("page 1: %v, next %q, fetched %v", titles, next, fetched)
+	if len(titles) != 20 || titles[0] != "50" || next == "" || prev != "" || fetched[4] != 0 {
+		t.Fatalf("page 1: %v, next %q, prev %q, fetched %v", titles, next, prev, fetched)
 	}
 	// 10 posts left in store: page 4 of the feed is read to fill the page.
-	titles, next = page(next)
-	if len(titles) != 20 || titles[0] != "30" || titles[19] != "11" || next == "" || fetched[4] != 1 || fetched[5] != 0 {
-		t.Fatalf("page 2: %v, next %q, fetched %v", titles, next, fetched)
+	page2 := next
+	titles, next = page(page2)
+	if len(titles) != 20 || titles[0] != "30" || titles[19] != "11" || next == "" || prev != "/" || fetched[4] != 1 || fetched[5] != 0 {
+		t.Fatalf("page 2: %v, next %q, prev %q, fetched %v", titles, next, prev, fetched)
 	}
 	// The last page reads the rest; the history is complete.
 	titles, next = page(next)
 	if len(titles) != 10 || titles[9] != "1" || next != "" || fetched[5] != 1 {
 		t.Fatalf("page 3: %v, next %q, fetched %v", titles, next, fetched)
+	}
+	// Back again: the newer page is page 2, with the same posts.
+	if back, _ := page(prev); len(back) != 20 || back[0] != "30" || back[19] != "11" {
+		t.Errorf("newer page from page 3: %v (via %q, page 2 is %q)", back, prev, page2)
 	}
 	if f, err := blog.srv.store.GetFeed(blog.srv.feedID); err != nil || f.BackfillNext != "" {
 		t.Errorf("backfill_next after the last page: %+v, %v", f, err)
