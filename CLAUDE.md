@@ -23,15 +23,16 @@ cmd/ampress/               blog binary: `ampress init`, `ampress serve` (server 
 cmd/am/                    CLI client (talks HTTP only; config in $AM_CONFIG or ~/.config/am/config.toml)
 internal/atom/             Atom types, parse/marshal (shared by all Go components)
 internal/sign/             signing input, Ed25519 sign/verify, key document, KeyCache, identity URLs, PEM key files
-internal/paging/           RFC 5005 ?before= cursor (amfeed + amagg)
+internal/paging/           RFC 5005 ?before= cursor (amfeed, amagg, ampress)
 internal/web/              shared HTTP helpers: JSON, CORS, bearer tokens
 internal/webmention/       WebMention: discovery, sending with retries, link checks, per-host rate limit
-internal/websub/           WebSub: content signature, lease limits (hub in amfeed, subscriber in amagg)
+internal/websub/           WebSub: content signature, lease limits (hub in amfeed, subscriber in island)
 internal/amfeed/           config (TOML), SQLite store, HTTP server, HTML pages, init, content folder sync
 internal/island/           what every island shares: feeds/entries/subscriptions store, fetch/discovery, ingest, poll, WebSub subscriber, WebMentions (receive, forward), threads
 internal/amagg/            island + members: config, store (users, tokens, readers, invites, follows), login (challenge), follow, timeline, HTML
-internal/ampress/          island + one feed: config, store (blog feed, posts by slug), pages, theme loading
-  theme/                   built-in theme (templates + static/), embedded
+internal/ampress/          island + one feed: config, store (blog feed, posts by slug, reactions, reads), pages, theme loading,
+                           sanitize.go (bluemonday allowlist for feed HTML), reactions.go (reactions/reads API)
+  theme/                   built-in theme (templates + static/ with style.css, ampress.js), embedded
 amfront/                   Vue 3 + Vite + TypeScript static client
   src/lib/atom.ts          Atom parsing (mirrors internal/atom)
   src/lib/sign.ts          signing input + Web Crypto verification (mirrors internal/sign)

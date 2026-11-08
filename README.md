@@ -28,7 +28,7 @@ Early, but the whole loop works:
 
 - **amfeed** — publish, reply, delete, signed entries, paged feeds, its own WebSub hub, WebMentions, and a content folder that turns Markdown files into posts
 - **amagg** — login with your identity URL, follows, island and personal timelines, threads, replies forwarded across islands, feed reader access
-- **ampress** — a blog for one feed: index, post pages with replies, about page, themes
+- **ampress** — a blog for one feed: index, post pages with replies, about page, themes, emoji reactions and readers count, and the feed's whole history, read as far back as anyone pages
 - **amfront** — a web frontend that checks every signature in your browser
 - **am** — a command-line client
 
